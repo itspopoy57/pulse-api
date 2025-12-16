@@ -13,6 +13,8 @@ import postRoutes from "./routes/posts";
 import userRoutes from "./routes/users";
 import commentRoutes from "./routes/comments";
 import adminRoutes from "./routes/admin";
+import uploadRoutes from "./routes/uploads";
+
 
 dotenv.config();
 
@@ -23,6 +25,9 @@ app.use(express.json());
 
 app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.json({ ok: true }));
+
+
+app.use("/uploads", uploadRoutes);
 
 
 // Apply generic rate limiter to all routes
