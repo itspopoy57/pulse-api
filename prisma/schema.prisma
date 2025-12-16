@@ -1,0 +1,261 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PostType {
+  HOT_TAKE
+  CONFESSION
+  QUESTION
+  VS
+  POLL
+}
+
+enum ReactionType {
+  UPVOTE
+  DOWNVOTE
+}
+
+enum VsSide {
+  A
+  B
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  username     String?  @unique
+  region       String?
+  createdAt    DateTime @default(now())
+
+  // admin
+  isAdmin      Boolean  @default(false)
+  isBanned     Boolean  @default(false)
+  bannedAt     DateTime?
+  bannedReason String?
+
+  // profile
+  displayName  String?
+  bio          String?
+  avatarUrl    String?
+
+  posts        Post[]
+  comments     Comment[]
+
+  // reactions
+  postReactions    PostReaction[]
+  vsVotes          VsVote[]
+  commentReactions CommentReaction[]
+
+  // bookmarks
+  savedPosts   SavedPost[]
+
+  // follow system
+  followers    Follow[] @relation("UserFollowers")
+  following    Follow[] @relation("UserFollowing")
+  
+  // poll votes
+  pollVotes    PollVote[]
+}
+
+model Poll {
+  id            Int          @id @default(autoincrement())
+  postId        Int          @unique
+  post          Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+  
+  // Poll settings
+  allowMultiple Boolean      @default(false)
+  maxChoices    Int?
+  endsAt        DateTime?
+  
+  // Metadata
+  totalVotes    Int          @default(0)
+  options       PollOption[]
+  votes         PollVote[]
+  
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  
+  @@index([postId])
+}
+
+model PollOption {
+  id        Int        @id @default(autoincrement())
+  pollId    Int
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  
+  text      String     @db.VarChar(100)
+  order     Int
+  votes     PollVote[]
+  voteCount Int        @default(0)
+  
+  createdAt DateTime   @default(now())
+  
+  @@index([pollId])
+  @@index([pollId, order])
+}
+
+model PollVote {
+  id        Int        @id @default(autoincrement())
+  pollId    Int
+  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  optionId  Int
+  option    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime   @default(now())
+  
+  @@unique([userId, pollId, optionId])
+  @@index([pollId])
+  @@index([optionId])
+  @@index([userId])
+}
+
+model Post {
+  id            Int        @id @default(autoincrement())
+  type          PostType
+  title         String
+  body          String?
+
+  // media on posts
+  mediaUrl      String?
+  mediaType     String?
+
+  sideA         String?
+  sideB         String?
+  votesA        Int        @default(0)
+  votesB        Int        @default(0)
+  upvotes       Int        @default(0)
+  downvotes     Int        @default(0)
+  isAnonymous   Boolean    @default(true)
+  region        String?
+
+  // moderation
+  isReported    Boolean    @default(false)
+  isHidden      Boolean    @default(false)
+  reportedCount Int        @default(0)
+  moderatedAt   DateTime?
+  moderatedBy   Int?
+  moderationNote String?
+
+  author        User       @relation(fields: [authorId], references: [id])
+  authorId      Int
+
+  comments      Comment[]
+  reactions     PostReaction[]
+  vsVotes       VsVote[]
+  poll          Poll?
+
+  // who bookmarked this
+  savedBy       SavedPost[]
+
+  createdAt     DateTime   @default(now())
+}
+
+model Comment {
+  id            Int       @id @default(autoincrement())
+  text          String
+  isAnonymous   Boolean   @default(true)
+  likeCount     Int       @default(0)
+  isHidden      Boolean   @default(false)
+  reportedCount Int       @default(0)
+  isReported    Boolean   @default(false)
+  moderatedAt   DateTime?
+  moderatedBy   Int?
+  moderationNote String?
+
+  mediaUrl      String?
+  mediaType     String?
+
+  postId   Int
+  post     Post   @relation(fields: [postId], references: [id])
+
+  authorId Int
+  author   User   @relation(fields: [authorId], references: [id])
+
+  parentId Int?
+  parent   Comment?  @relation("CommentToComment", fields: [parentId], references: [id])
+  replies  Comment[] @relation("CommentToComment")
+
+  reactions CommentReaction[]
+
+  createdAt DateTime @default(now())
+}
+
+// one reaction per user per post
+model PostReaction {
+  id        Int          @id @default(autoincrement())
+  type      ReactionType
+
+  user      User         @relation(fields: [userId], references: [id])
+  userId    Int
+
+  post      Post         @relation(fields: [postId], references: [id])
+  postId    Int
+
+  @@unique([userId, postId])
+}
+
+// one VS vote per user per post
+model VsVote {
+  id     Int    @id @default(autoincrement())
+  side   VsSide
+
+  user   User   @relation(fields: [userId], references: [id])
+  userId Int
+
+  post   Post   @relation(fields: [postId], references: [id])
+  postId Int
+
+  @@unique([userId, postId])
+}
+
+// one like per user per comment
+model CommentReaction {
+  id        Int          @id @default(autoincrement())
+  type      ReactionType
+
+  user      User         @relation(fields: [userId], references: [id])
+  userId    Int
+
+  comment   Comment      @relation(fields: [commentId], references: [id])
+  commentId Int
+
+  @@unique([userId, commentId])
+}
+
+// saved posts (bookmarks)
+model SavedPost {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  postId    Int
+
+  user      User     @relation(fields: [userId], references: [id])
+  post      Post     @relation(fields: [postId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+}
+
+model Follow {
+  id          Int      @id @default(autoincrement())
+
+  // who is following
+  follower    User     @relation("UserFollowing", fields: [followerId], references: [id])
+  followerId  Int
+
+  // who is being followed
+  following   User     @relation("UserFollowers", fields: [followingId], references: [id])
+  followingId Int
+
+  createdAt   DateTime @default(now())
+
+  @@unique([followerId, followingId])
+}

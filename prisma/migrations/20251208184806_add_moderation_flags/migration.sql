@@ -1,0 +1,9 @@
+-- AlterTable
+ALTER TABLE "Comment" ADD COLUMN     "isHidden" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "isReported" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "reportedCount" INTEGER NOT NULL DEFAULT 0;
+
+-- AlterTable
+ALTER TABLE "Post" ADD COLUMN     "isHidden" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "isReported" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "reportedCount" INTEGER NOT NULL DEFAULT 0;
