@@ -21,6 +21,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.get("/", (req, res) => res.send("OK"));
+app.get("/health", (req, res) => res.json({ ok: true }));
+
+
 // Apply generic rate limiter to all routes
 app.use(genericLimiter);
 
@@ -44,6 +48,3 @@ app.listen(PORT, () => {
 });
 
 
-app.get("/", (req, res) => {
-  res.send("OK ✅ Pulse API is running");
-});
