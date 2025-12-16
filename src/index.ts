@@ -42,3 +42,8 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🚀 Pulse API listening on http://localhost:${PORT}`);
 });
+
+
+app.get("/", (req, res) => {
+  res.send("OK ✅ Pulse API is running");
+});
