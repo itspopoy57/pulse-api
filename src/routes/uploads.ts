@@ -22,13 +22,10 @@ router.get("/sign", async (req, res) => {
       contentType,
     });
 
-    const [readUrl] = await file.getSignedUrl({
-      version: "v4",
-      action: "read",
-      expires: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
-    });
+    // Return permanent public URL instead of signed URL
+    const publicUrl = `https://storage.googleapis.com/${bucketName}/${objectKey}`;
 
-    res.json({ uploadUrl, readUrl, objectKey, bucketName });
+    res.json({ uploadUrl, publicUrl, objectKey });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || "sign failed" });
   }
