@@ -192,6 +192,97 @@ router.patch("/me", authMiddleware, async (req: AuthRequest, res) => {
 });
 
 // ----------------------------------------------------
+//  SEARCH USERS  (/users/search)
+// ----------------------------------------------------
+
+// GET /users/search?q=query
+router.get("/search", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    console.log("🔍 GET /users/search called with query:", req.query);
+    
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      console.log("❌ Search failed: No userId in request");
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    console.log("✅ Authenticated user:", currentUserId);
+
+    const query = req.query.q as string;
+    if (!query || query.trim().length === 0) {
+      console.log("⚠️ Empty search query, returning empty results");
+      return res.json({ users: [] });
+    }
+
+    console.log("🔎 Searching for:", query);
+
+    const searchTerm = query.trim().toLowerCase();
+
+    // Search for users by username or display name
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { username: { contains: searchTerm, mode: "insensitive" } },
+          { displayName: { contains: searchTerm, mode: "insensitive" } },
+        ],
+        NOT: {
+          id: currentUserId, // Exclude current user from results
+        },
+      },
+      take: 50, // Limit results
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    // Get follow relationships for each user
+    const usersWithFollowInfo = await Promise.all(
+      users.map(async (user) => {
+        const [followerCount, followingCount, isFollowing, isFollowingBack] =
+          await Promise.all([
+            prisma.follow.count({ where: { followingId: user.id } }),
+            prisma.follow.count({ where: { followerId: user.id } }),
+            prisma.follow.findUnique({
+              where: {
+                followerId_followingId: {
+                  followerId: currentUserId,
+                  followingId: user.id,
+                },
+              },
+            }),
+            prisma.follow.findUnique({
+              where: {
+                followerId_followingId: {
+                  followerId: user.id,
+                  followingId: currentUserId,
+                },
+              },
+            }),
+          ]);
+
+        return {
+          id: String(user.id),
+          username: user.username,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          bio: user.bio,
+          followerCount,
+          followingCount,
+          isFollowing: !!isFollowing,
+          isFollowingBack: !!isFollowingBack,
+          isMutual: !!isFollowing && !!isFollowingBack,
+        };
+      })
+    );
+
+    return res.json({ users: usersWithFollowInfo });
+  } catch (err) {
+    console.error("GET /users/search error:", err);
+    res.status(500).json({ error: "Failed to search users" });
+  }
+});
+
+// ----------------------------------------------------
 //  OTHER USER PROFILE  (/users/:id/profile)
 // ----------------------------------------------------
 
