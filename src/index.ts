@@ -14,6 +14,7 @@ import userRoutes from "./routes/users";
 import commentRoutes from "./routes/comments";
 import adminRoutes from "./routes/admin";
 import uploadRoutes from "./routes/uploads";
+import messageRoutes from "./routes/messages";
 
 
 dotenv.config();
@@ -39,6 +40,9 @@ app.use("/auth", authRoutes);
 // Posts and users use the generic limiter (already applied above)
 app.use("/posts", postRoutes);
 app.use("/users", userRoutes);
+
+// Messages use the generic limiter
+app.use("/messages", messageRoutes);
 
 // Comments get the comment-specific limiter
 app.use("/comments", commentLimiter, commentRoutes);

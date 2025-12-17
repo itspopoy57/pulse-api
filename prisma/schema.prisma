@@ -61,6 +61,12 @@ model User {
   
   // poll votes
   pollVotes    PollVote[]
+  
+  // messaging
+  sentMessages     Message[] @relation("MessageSender")
+  receivedMessages Message[] @relation("MessageReceiver")
+  conversations1   Conversation[] @relation("ConversationUser1")
+  conversations2   Conversation[] @relation("ConversationUser2")
 }
 
 model Poll {
@@ -258,4 +264,63 @@ model Follow {
   createdAt   DateTime @default(now())
 
   @@unique([followerId, followingId])
+}
+
+// Conversations between two users
+model Conversation {
+  id            Int       @id @default(autoincrement())
+  
+  // The two participants
+  user1         User      @relation("ConversationUser1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user1Id       Int
+  
+  user2         User      @relation("ConversationUser2", fields: [user2Id], references: [id], onDelete: Cascade)
+  user2Id       Int
+  
+  // Messages in this conversation
+  messages      Message[]
+  
+  // Last message info for sorting
+  lastMessageAt DateTime  @default(now())
+  lastMessageText String?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  @@unique([user1Id, user2Id])
+  @@index([user1Id])
+  @@index([user2Id])
+  @@index([lastMessageAt])
+}
+
+// Individual messages
+model Message {
+  id             Int          @id @default(autoincrement())
+  
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId Int
+  
+  sender         User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  senderId       Int
+  
+  receiver       User         @relation("MessageReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  receiverId     Int
+  
+  text           String?      @db.Text
+  
+  // Attachments (images, files)
+  mediaUrl       String?
+  mediaType      String?      // 'image' or 'file'
+  fileName       String?      // Original filename for files
+  
+  // Message status
+  isRead         Boolean      @default(false)
+  readAt         DateTime?
+  
+  createdAt      DateTime     @default(now())
+  
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([createdAt])
 }
