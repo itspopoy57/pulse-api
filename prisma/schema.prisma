@@ -317,10 +317,16 @@ model Message {
   isRead         Boolean      @default(false)
   readAt         DateTime?
   
+  // Soft delete for admin monitoring
+  isDeleted      Boolean      @default(false)
+  deletedAt      DateTime?
+  deletedBy      Int?
+  
   createdAt      DateTime     @default(now())
   
   @@index([conversationId])
   @@index([senderId])
   @@index([receiverId])
   @@index([createdAt])
+  @@index([isDeleted])
 }

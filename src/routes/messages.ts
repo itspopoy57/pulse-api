@@ -2,6 +2,7 @@
 import { Router } from "express";
 import { prisma } from "../prisma";
 import { authMiddleware, AuthRequest } from "../middleware/auth";
+import { requireAdmin } from "../middleware/admin";
 
 const router = Router();
 
@@ -147,10 +148,11 @@ router.get("/:userId", authMiddleware, async (req: AuthRequest, res) => {
     // Get or create conversation
     const conversation = await getOrCreateConversation(currentUserId, otherUserId);
 
-    // Get all messages in this conversation
+    // Get all messages in this conversation (exclude deleted for regular users)
     const messages = await prisma.message.findMany({
       where: {
         conversationId: conversation.id,
+        isDeleted: false, // Only show non-deleted messages
       },
       orderBy: {
         createdAt: "asc",
@@ -341,6 +343,232 @@ router.post("/:userId/read", authMiddleware, async (req: AuthRequest, res) => {
   } catch (err) {
     console.error("POST /messages/:userId/read error:", err);
     res.status(500).json({ error: "Failed to mark messages as read" });
+  }
+});
+
+// ----------------------------------------------------
+//  DELETE A MESSAGE
+// ----------------------------------------------------
+
+// DELETE /messages/:messageId
+router.delete("/:messageId", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const messageId = Number(req.params.messageId);
+    if (Number.isNaN(messageId)) {
+      return res.status(400).json({ error: "Invalid message ID" });
+    }
+
+    console.log(`🗑️ DELETE /messages/${messageId} by user:`, currentUserId);
+
+    // Find the message
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+
+    // Only allow sender to delete their own messages
+    if (message.senderId !== currentUserId) {
+      return res.status(403).json({ error: "You can only delete your own messages" });
+    }
+
+    // Soft delete the message (keep for admin monitoring)
+    await prisma.message.update({
+      where: { id: messageId },
+      data: {
+        isDeleted: true,
+        deletedAt: new Date(),
+        deletedBy: currentUserId,
+      },
+    });
+
+    // Update conversation's last message if needed (only non-deleted messages)
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: message.conversationId },
+      include: {
+        messages: {
+          where: { isDeleted: false },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
+    });
+
+    if (conversation) {
+      const lastMessage = conversation.messages[0];
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          lastMessageAt: lastMessage?.createdAt || conversation.lastMessageAt,
+          lastMessageText: lastMessage?.text || (lastMessage?.mediaType === "image" ? "📷 Image" : "📎 File") || null,
+        },
+      });
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /messages/:messageId error:", err);
+    res.status(500).json({ error: "Failed to delete message" });
+  }
+});
+
+// ----------------------------------------------------
+//  ADMIN: GET ALL CONVERSATIONS (FOR MONITORING)
+// ----------------------------------------------------
+
+// GET /messages/admin/all-conversations
+router.get("/admin/all-conversations", authMiddleware, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    console.log("🔍 ADMIN: GET /messages/admin/all-conversations");
+
+    const conversations = await prisma.conversation.findMany({
+      include: {
+        user1: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
+        },
+        user2: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
+        },
+        messages: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
+      orderBy: {
+        lastMessageAt: "desc",
+      },
+    });
+
+    const formattedConversations = conversations.map((conv) => ({
+      id: String(conv.id),
+      user1: {
+        id: String(conv.user1.id),
+        username: conv.user1.username,
+        displayName: conv.user1.displayName,
+        avatarUrl: conv.user1.avatarUrl,
+      },
+      user2: {
+        id: String(conv.user2.id),
+        username: conv.user2.username,
+        displayName: conv.user2.displayName,
+        avatarUrl: conv.user2.avatarUrl,
+      },
+      lastMessage: conv.messages[0]
+        ? {
+            text: conv.messages[0].text,
+            mediaUrl: conv.messages[0].mediaUrl,
+            mediaType: conv.messages[0].mediaType,
+            createdAt: conv.messages[0].createdAt.toISOString(),
+            isDeleted: conv.messages[0].isDeleted,
+          }
+        : null,
+      lastMessageAt: conv.lastMessageAt.toISOString(),
+    }));
+
+    res.json({ conversations: formattedConversations });
+  } catch (err) {
+    console.error("GET /messages/admin/all-conversations error:", err);
+    res.status(500).json({ error: "Failed to load conversations" });
+  }
+});
+
+// ----------------------------------------------------
+//  ADMIN: GET CONVERSATION MESSAGES (INCLUDING DELETED)
+// ----------------------------------------------------
+
+// GET /messages/admin/conversation/:conversationId
+router.get("/admin/conversation/:conversationId", authMiddleware, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const conversationId = Number(req.params.conversationId);
+    if (Number.isNaN(conversationId)) {
+      return res.status(400).json({ error: "Invalid conversation ID" });
+    }
+
+    console.log(`🔍 ADMIN: GET /messages/admin/conversation/${conversationId}`);
+
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      include: {
+        user1: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
+        },
+        user2: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          },
+        },
+        messages: {
+          orderBy: { createdAt: "asc" },
+          // Include ALL messages, even deleted ones
+        },
+      },
+    });
+
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+
+    const formattedMessages = conversation.messages.map((msg) => ({
+      id: String(msg.id),
+      text: msg.text,
+      mediaUrl: msg.mediaUrl,
+      mediaType: msg.mediaType,
+      fileName: msg.fileName,
+      senderId: String(msg.senderId),
+      receiverId: String(msg.receiverId),
+      isRead: msg.isRead,
+      isDeleted: msg.isDeleted,
+      deletedAt: msg.deletedAt?.toISOString(),
+      deletedBy: msg.deletedBy ? String(msg.deletedBy) : null,
+      createdAt: msg.createdAt.toISOString(),
+    }));
+
+    res.json({
+      conversation: {
+        id: String(conversation.id),
+        user1: {
+          id: String(conversation.user1.id),
+          username: conversation.user1.username,
+          displayName: conversation.user1.displayName,
+          avatarUrl: conversation.user1.avatarUrl,
+        },
+        user2: {
+          id: String(conversation.user2.id),
+          username: conversation.user2.username,
+          displayName: conversation.user2.displayName,
+          avatarUrl: conversation.user2.avatarUrl,
+        },
+        messages: formattedMessages,
+      },
+    });
+  } catch (err) {
+    console.error("DELETE /messages/:messageId error:", err);
+    res.status(500).json({ error: "Failed to delete message" });
   }
 });
 
