@@ -23,6 +23,8 @@
     "expo-image-picker": "~17.0.10",
     "express": "^5.2.1",
     "express-rate-limit": "^8.2.1",
+    "firebase-admin": "^13.6.0",
+    "google-auth-library": "^10.5.0",
     "jsonwebtoken": "^9.0.3",
     "prisma": "^5.15.0"
   },

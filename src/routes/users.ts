@@ -97,6 +97,92 @@ function mapPost(post: any) {
 }
 
 // ----------------------------------------------------
+//  SEARCH USERS  (/users/search)
+//  IMPORTANT: Must be before /:id routes to avoid conflicts
+// ----------------------------------------------------
+
+router.get("/search", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const query = req.query.q as string;
+    if (!query || query.trim().length === 0) {
+      return res.json({ users: [] });
+    }
+
+    const searchTerm = query.trim().toLowerCase();
+
+    // Search users by username, displayName, or email
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { username: { contains: searchTerm, mode: "insensitive" } },
+          { displayName: { contains: searchTerm, mode: "insensitive" } },
+          { email: { contains: searchTerm, mode: "insensitive" } },
+        ],
+        NOT: {
+          id: currentUserId, // Exclude current user from results
+        },
+      },
+      take: 20, // Limit results
+      orderBy: [
+        { username: "asc" },
+      ],
+    });
+
+    // For each user, check if current user follows them and if they follow back
+    const usersWithFollowStatus = await Promise.all(
+      users.map(async (user) => {
+        const [isFollowing, isFollowingBack, followerCount, followingCount] = await Promise.all([
+          prisma.follow.findUnique({
+            where: {
+              followerId_followingId: {
+                followerId: currentUserId,
+                followingId: user.id,
+              },
+            },
+          }),
+          prisma.follow.findUnique({
+            where: {
+              followerId_followingId: {
+                followerId: user.id,
+                followingId: currentUserId,
+              },
+            },
+          }),
+          prisma.follow.count({ where: { followingId: user.id } }),
+          prisma.follow.count({ where: { followerId: user.id } }),
+        ]);
+
+        // Check for mutual follows (both follow each other)
+        const isMutual = !!isFollowing && !!isFollowingBack;
+
+        return {
+          id: String(user.id),
+          username: user.username,
+          displayName: user.displayName,
+          bio: user.bio,
+          avatarUrl: user.avatarUrl,
+          followerCount,
+          followingCount,
+          isFollowing: !!isFollowing,
+          isFollowingBack: !!isFollowingBack,
+          isMutual,
+        };
+      })
+    );
+
+    res.json({ users: usersWithFollowStatus });
+  } catch (err) {
+    console.error("GET /users/search error:", err);
+    res.status(500).json({ error: "Failed to search users" });
+  }
+});
+
+// ----------------------------------------------------
 //  CURRENT USER PROFILE  (/users/me)
 // ----------------------------------------------------
 

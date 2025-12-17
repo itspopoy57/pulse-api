@@ -33,6 +33,11 @@ model User {
   region       String?
   createdAt    DateTime @default(now())
 
+  // email verification
+  emailVerified           Boolean   @default(false)
+  verificationToken       String?
+  verificationTokenExpiry DateTime?
+
   // admin
   isAdmin      Boolean  @default(false)
   isBanned     Boolean  @default(false)

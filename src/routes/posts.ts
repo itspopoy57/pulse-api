@@ -99,6 +99,23 @@ router.post(
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
+      // Check if user's email is verified
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { emailVerified: true, email: true },
+      });
+
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (!user.emailVerified) {
+        return res.status(403).json({
+          error: "Please verify your email before posting",
+          requiresVerification: true,
+        });
+      }
+
       const body = req.body ?? {};
       console.log("POST /posts body:", body);
 

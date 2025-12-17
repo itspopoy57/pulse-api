@@ -18,6 +18,22 @@ import uploadRoutes from "./routes/uploads";
 
 dotenv.config();
 
+// Set to true to force PROD database even when running locally
+const FORCE_PROD_DB = false;
+
+// Auto-switch to DEV database when running locally
+const isDev = process.env.NODE_ENV !== "production";
+if (isDev && !FORCE_PROD_DB && process.env.DATABASE_URL_DEV) {
+  process.env.DATABASE_URL = process.env.DATABASE_URL_DEV;
+  console.log("🔧 Using DEV database");
+} else {
+  console.log("🚀 Using PROD database");
+  if (FORCE_PROD_DB && isDev) {
+    console.log("⚠️  FORCE_PROD_DB is enabled - using PROD database in dev mode");
+  }
+}
+console.log("📊 Database:", process.env.DATABASE_URL?.split("@")[1]?.split("/")[0] || "unknown");
+
 const app = express();
 
 app.use(cors());
