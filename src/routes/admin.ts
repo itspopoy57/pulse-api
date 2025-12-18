@@ -409,6 +409,75 @@ router.post('/users/:id/unban', async (req, res) => {
 });
 
 /**
+ * GET /admin/users/:id/posts
+ * Get all posts by a user (including anonymous posts)
+ */
+router.get('/users/:id/posts', async (req: AuthRequest, res) => {
+  try {
+    const userId = parseInt(req.params.id);
+    
+    if (isNaN(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
+    // Fetch all posts by this user, including anonymous ones
+    const posts = await prisma.post.findMany({
+      where: { authorId: userId },
+      include: {
+        author: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+          }
+        },
+        poll: {
+          include: {
+            options: {
+              include: {
+                votes: true,
+              }
+            }
+          }
+        },
+        _count: {
+          select: {
+            comments: true,
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Map posts to include computed fields
+    const mappedPosts = posts.map(post => {
+      let votesA = 0;
+      let votesB = 0;
+      
+      if (post.type === 'VS' && post.poll) {
+        const optionA = post.poll.options[0];
+        const optionB = post.poll.options[1];
+        votesA = optionA?.votes.length || 0;
+        votesB = optionB?.votes.length || 0;
+      }
+
+      return {
+        ...post,
+        votesA,
+        votesB,
+        comments: [], // We don't need full comments, just the count
+      };
+    });
+
+    res.json({ posts: mappedPosts });
+  } catch (error) {
+    console.error('[Admin API] Error fetching user posts:', error);
+    res.status(500).json({ error: 'Failed to fetch user posts' });
+  }
+});
+
+/**
  * GET /admin/users/:id/details
  * Get detailed user information including followers, following, and messages
  */
