@@ -542,23 +542,28 @@ router.get('/users/:id/details', async (req: AuthRequest, res) => {
     console.log('[Admin API] Conversations fetched:', conversationsRaw.length);
 
     console.log('[Admin API] Fetching messages for conversations...');
-    // Get messages for each conversation
+    // Get messages for each conversation (INCLUDING DELETED MESSAGES for admin monitoring)
     const conversationsWithMessages = await Promise.all(
       conversationsRaw.map(async (conv) => {
         const messages = await prisma.message.findMany({
           where: {
             conversationId: conv.id,
+            // NO isDeleted filter - admins see ALL messages including deleted ones
           },
           orderBy: { createdAt: 'desc' },
-          take: 20,
+          take: 50, // Increased limit for admin view
           select: {
             id: true,
             text: true,
             mediaUrl: true,
             mediaType: true,
+            fileName: true,
             senderId: true,
             receiverId: true,
             isRead: true,
+            isDeleted: true,
+            deletedAt: true,
+            deletedBy: true,
             createdAt: true,
           }
         });
