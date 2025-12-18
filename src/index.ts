@@ -15,6 +15,7 @@ import commentRoutes from "./routes/comments";
 import adminRoutes from "./routes/admin";
 import uploadRoutes from "./routes/uploads";
 import messageRoutes from "./routes/messages";
+import groupRoutes from "./routes/groups";
 
 
 dotenv.config();
@@ -43,6 +44,9 @@ app.use("/users", userRoutes);
 
 // Messages use the generic limiter
 app.use("/messages", messageRoutes);
+
+// Groups use the generic limiter
+app.use("/groups", groupRoutes);
 
 // Comments get the comment-specific limiter
 app.use("/comments", commentLimiter, commentRoutes);

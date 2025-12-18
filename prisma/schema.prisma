@@ -44,6 +44,18 @@ model User {
   bio          String?
   avatarUrl    String?
 
+  // push notifications
+  pushToken    String?
+  pushPlatform String?  // 'ios' or 'android'
+  notificationsEnabled Boolean @default(true)
+  
+  // notification preferences
+  notifyMessages   Boolean @default(true)
+  notifyFollows    Boolean @default(true)
+  notifyComments   Boolean @default(true)
+  notifyReactions  Boolean @default(true)
+  notifyMentions   Boolean @default(true)
+
   posts        Post[]
   comments     Comment[]
 
@@ -67,6 +79,16 @@ model User {
   receivedMessages Message[] @relation("MessageReceiver")
   conversations1   Conversation[] @relation("ConversationUser1")
   conversations2   Conversation[] @relation("ConversationUser2")
+  
+  // group messaging
+  groupMemberships GroupMember[]
+  groupMessages    GroupMessage[]
+  createdGroups    Group[] @relation("GroupCreator")
+  groupMessageReads GroupMessageRead[]
+  typingInGroups   GroupTyping[]
+  
+  // notifications
+  notifications    Notification[]
 }
 
 model Poll {
@@ -329,4 +351,157 @@ model Message {
   @@index([receiverId])
   @@index([createdAt])
   @@index([isDeleted])
+}
+
+// In-app notifications
+model Notification {
+  id        Int      @id @default(autoincrement())
+  
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  type      String   // 'message', 'follow', 'comment', 'reaction', 'mention', 'group_message', 'group_invite'
+  title     String
+  body      String
+  
+  // Related entities
+  fromUserId   Int?
+  postId       Int?
+  commentId    Int?
+  conversationId Int?
+  groupId      Int?
+  
+  // Status
+  isRead    Boolean  @default(false)
+  readAt    DateTime?
+  
+  // Data for navigation
+  data      Json?
+  
+  createdAt DateTime @default(now())
+  
+  @@index([userId])
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+// Group chat models
+model Group {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(100)
+  description String?  @db.Text
+  avatarUrl   String?
+  
+  // Creator/owner
+  creatorId   Int
+  creator     User     @relation("GroupCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  
+  // Members
+  members     GroupMember[]
+  messages    GroupMessage[]
+  
+  // Typing indicators
+  typingUsers GroupTyping[]
+  
+  // Metadata
+  lastMessageAt DateTime?
+  lastMessageText String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([creatorId])
+  @@index([lastMessageAt])
+}
+
+enum GroupRole {
+  ADMIN
+  MEMBER
+}
+
+model GroupMember {
+  id        Int       @id @default(autoincrement())
+  
+  groupId   Int
+  group     Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  role      GroupRole @default(MEMBER)
+  
+  // Notification settings per group
+  isMuted   Boolean   @default(false)
+  
+  joinedAt  DateTime  @default(now())
+  
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+}
+
+model GroupMessage {
+  id        Int      @id @default(autoincrement())
+  
+  groupId   Int
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  senderId  Int
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  
+  text      String?  @db.Text
+  
+  // Attachments
+  mediaUrl  String?
+  mediaType String?  // 'image' or 'file'
+  fileName  String?
+  
+  // Read receipts
+  reads     GroupMessageRead[]
+  
+  // Soft delete
+  isDeleted Boolean  @default(false)
+  deletedAt DateTime?
+  deletedBy Int?
+  
+  createdAt DateTime @default(now())
+  
+  @@index([groupId])
+  @@index([senderId])
+  @@index([createdAt])
+  @@index([groupId, createdAt])
+}
+
+// Track who has read each message
+model GroupMessageRead {
+  id        Int      @id @default(autoincrement())
+  
+  messageId Int
+  message   GroupMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  readAt    DateTime @default(now())
+  
+  @@unique([messageId, userId])
+  @@index([messageId])
+  @@index([userId])
+}
+
+// Typing indicators for groups
+model GroupTyping {
+  id        Int      @id @default(autoincrement())
+  
+  groupId   Int
+  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  updatedAt DateTime @updatedAt
+  
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([updatedAt])
 }

@@ -3,6 +3,7 @@ import { Router } from "express";
 import { prisma } from "../prisma";
 import { authMiddleware, AuthRequest } from "../middleware/auth";
 import { requireAdmin } from "../middleware/admin";
+import { notifyNewMessage } from "../utils/pushNotifications";
 
 const router = Router();
 
@@ -289,6 +290,24 @@ router.post("/:userId", authMiddleware, async (req: AuthRequest, res) => {
         lastMessageText: text || (mediaType === "image" ? "📷 Image" : "📎 File"),
       },
     });
+
+    // Send push notification to receiver
+    const sender = await prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: { displayName: true, username: true },
+    });
+    
+    if (sender) {
+      const senderName = sender.displayName || sender.username || 'Someone';
+      const messagePreview = text || (mediaType === "image" ? "📷 Sent an image" : "📎 Sent a file");
+      await notifyNewMessage(
+        receiverId,
+        currentUserId,
+        senderName,
+        messagePreview.substring(0, 100),
+        conversation.id
+      );
+    }
 
     res.json({
       message: {

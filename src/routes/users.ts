@@ -2,6 +2,7 @@
 import { Router } from "express";
 import { prisma } from "../prisma";
 import { authMiddleware, AuthRequest } from "../middleware/auth";
+import { notifyNewFollower } from "../utils/pushNotifications";
 
 const router = Router();
 
@@ -565,6 +566,15 @@ router.post(
           },
         });
         following = true;
+        
+        // Send notification to the followed user
+        const follower = await prisma.user.findUnique({
+          where: { id: currentUserId },
+        });
+        if (follower) {
+          const followerName = follower.displayName || follower.username || 'Someone';
+          await notifyNewFollower(targetUserId, currentUserId, followerName);
+        }
       } else {
         await prisma.follow.delete({
           where: { id: existing.id },
@@ -587,5 +597,157 @@ router.post(
     }
   }
 );
+
+// ----------------------------------------------------
+//  PUSH NOTIFICATIONS
+// ----------------------------------------------------
+
+// POST /users/device-token
+router.post("/device-token", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { token, platform } = req.body;
+
+    if (!token || !platform) {
+      return res.status(400).json({ error: "Token and platform are required" });
+    }
+
+    await prisma.user.update({
+      where: { id: currentUserId },
+      data: {
+        pushToken: token,
+        pushPlatform: platform,
+      },
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /users/device-token error:", err);
+    res.status(500).json({ error: "Failed to save device token" });
+  }
+});
+
+// PUT /users/notification-preferences
+router.put("/notification-preferences", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { messages, follows, comments, reactions, mentions } = req.body;
+
+    await prisma.user.update({
+      where: { id: currentUserId },
+      data: {
+        notifyMessages: messages ?? true,
+        notifyFollows: follows ?? true,
+        notifyComments: comments ?? true,
+        notifyReactions: reactions ?? true,
+        notifyMentions: mentions ?? true,
+      },
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("PUT /users/notification-preferences error:", err);
+    res.status(500).json({ error: "Failed to update preferences" });
+  }
+});
+
+// GET /users/notifications
+router.get("/notifications", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const notifications = await prisma.notification.findMany({
+      where: { userId: currentUserId },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+
+    return res.json({ notifications });
+  } catch (err) {
+    console.error("GET /users/notifications error:", err);
+    res.status(500).json({ error: "Failed to load notifications" });
+  }
+});
+
+// POST /users/notifications/:id/read
+router.post("/notifications/:id/read", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const notificationId = Number(req.params.id);
+    if (Number.isNaN(notificationId)) {
+      return res.status(400).json({ error: "Invalid notification id" });
+    }
+
+    await prisma.notification.update({
+      where: { id: notificationId, userId: currentUserId },
+      data: {
+        isRead: true,
+        readAt: new Date(),
+      },
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /users/notifications/:id/read error:", err);
+    res.status(500).json({ error: "Failed to mark notification as read" });
+  }
+});
+
+// POST /users/notifications/read-all
+router.post("/notifications/read-all", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    await prisma.notification.updateMany({
+      where: { userId: currentUserId, isRead: false },
+      data: {
+        isRead: true,
+        readAt: new Date(),
+      },
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /users/notifications/read-all error:", err);
+    res.status(500).json({ error: "Failed to mark all notifications as read" });
+  }
+});
+
+// GET /users/notifications/unread-count
+router.get("/notifications/unread-count", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const count = await prisma.notification.count({
+      where: { userId: currentUserId, isRead: false },
+    });
+
+    return res.json({ count });
+  } catch (err) {
+    console.error("GET /users/notifications/unread-count error:", err);
+    res.status(500).json({ error: "Failed to get unread count" });
+  }
+});
 
 export default router;
