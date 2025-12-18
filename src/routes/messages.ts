@@ -347,6 +347,98 @@ router.post("/:userId/read", authMiddleware, async (req: AuthRequest, res) => {
 });
 
 // ----------------------------------------------------
+//  EDIT A MESSAGE
+// ----------------------------------------------------
+
+// PATCH /messages/:messageId
+router.patch("/:messageId", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const messageId = Number(req.params.messageId);
+    if (Number.isNaN(messageId)) {
+      return res.status(400).json({ error: "Invalid message ID" });
+    }
+
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: "Message text is required" });
+    }
+
+    console.log(`✏️ PATCH /messages/${messageId} by user:`, currentUserId);
+
+    // Find the message
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+
+    // Only allow sender to edit their own messages
+    if (message.senderId !== currentUserId) {
+      return res.status(403).json({ error: "You can only edit your own messages" });
+    }
+
+    // Check if message is recent (within 5 minutes)
+    const messageAge = Date.now() - message.createdAt.getTime();
+    const fiveMinutes = 5 * 60 * 1000;
+    if (messageAge > fiveMinutes) {
+      return res.status(403).json({ error: "You can only edit messages within 5 minutes of sending" });
+    }
+
+    // Update the message
+    const updatedMessage = await prisma.message.update({
+      where: { id: messageId },
+      data: {
+        text: text.trim(),
+      },
+    });
+
+    // Update conversation's last message text if this was the last message
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: message.conversationId },
+      include: {
+        messages: {
+          where: { isDeleted: false },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+      },
+    });
+
+    if (conversation && conversation.messages[0]?.id === messageId) {
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: {
+          lastMessageText: text.trim(),
+        },
+      });
+    }
+
+    res.json({
+      message: {
+        id: String(updatedMessage.id),
+        text: updatedMessage.text,
+        mediaUrl: updatedMessage.mediaUrl,
+        mediaType: updatedMessage.mediaType,
+        fileName: updatedMessage.fileName,
+        isFromMe: true,
+        isRead: updatedMessage.isRead,
+        createdAt: updatedMessage.createdAt.toISOString(),
+      },
+    });
+  } catch (err) {
+    console.error("PATCH /messages/:messageId error:", err);
+    res.status(500).json({ error: "Failed to edit message" });
+  }
+});
+
+// ----------------------------------------------------
 //  DELETE A MESSAGE
 // ----------------------------------------------------
 

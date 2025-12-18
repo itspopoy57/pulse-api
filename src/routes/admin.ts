@@ -409,6 +409,202 @@ router.post('/users/:id/unban', async (req, res) => {
 });
 
 /**
+ * GET /admin/users/:id/details
+ * Get detailed user information including followers, following, and messages
+ */
+router.get('/users/:id/details', async (req: AuthRequest, res) => {
+  try {
+    console.log('[Admin API] GET /admin/users/:id/details called');
+    console.log('[Admin API] Request params:', req.params);
+    console.log('[Admin API] Request user ID:', req.userId);
+    
+    const userId = parseInt(req.params.id);
+    console.log('[Admin API] Parsed userId:', userId);
+    
+    if (isNaN(userId)) {
+      console.error('[Admin API] Invalid userId - not a number');
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
+    console.log('[Admin API] Fetching user from database...');
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        displayName: true,
+        bio: true,
+        avatarUrl: true,
+        region: true,
+        isAdmin: true,
+        isBanned: true,
+        bannedAt: true,
+        bannedReason: true,
+        createdAt: true,
+        _count: {
+          select: {
+            posts: true,
+            comments: true,
+            followers: true,
+            following: true,
+          }
+        }
+      }
+    });
+
+    if (!user) {
+      console.error('[Admin API] User not found in database');
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    console.log('[Admin API] User found:', { id: user.id, email: user.email });
+    console.log('[Admin API] Fetching followers...');
+    
+    // Get followers
+    const followers = await prisma.follow.findMany({
+      where: { followingId: userId },
+      select: {
+        follower: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            email: true,
+          }
+        },
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    console.log('[Admin API] Followers fetched:', followers.length);
+
+    console.log('[Admin API] Fetching following...');
+    // Get following
+    const following = await prisma.follow.findMany({
+      where: { followerId: userId },
+      select: {
+        following: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            email: true,
+          }
+        },
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    console.log('[Admin API] Following fetched:', following.length);
+
+    console.log('[Admin API] Fetching conversations...');
+    // Get conversations (both as user1 and user2)
+    const conversationsRaw = await prisma.conversation.findMany({
+      where: {
+        OR: [
+          { user1Id: userId },
+          { user2Id: userId }
+        ]
+      },
+      select: {
+        id: true,
+        user1Id: true,
+        user2Id: true,
+        lastMessageAt: true,
+        lastMessageText: true,
+        user1: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            email: true,
+          }
+        },
+        user2: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            email: true,
+          }
+        },
+      },
+      orderBy: { lastMessageAt: 'desc' },
+      take: 20,
+    });
+    console.log('[Admin API] Conversations fetched:', conversationsRaw.length);
+
+    console.log('[Admin API] Fetching messages for conversations...');
+    // Get messages for each conversation
+    const conversationsWithMessages = await Promise.all(
+      conversationsRaw.map(async (conv) => {
+        const messages = await prisma.message.findMany({
+          where: {
+            conversationId: conv.id,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          select: {
+            id: true,
+            text: true,
+            mediaUrl: true,
+            mediaType: true,
+            senderId: true,
+            receiverId: true,
+            isRead: true,
+            createdAt: true,
+          }
+        });
+
+        return {
+          ...conv,
+          messages,
+        };
+      })
+    );
+    console.log('[Admin API] Messages fetched for all conversations');
+
+    console.log('[Admin API] Preparing response...');
+    const response = {
+      user,
+      followers: followers.map(f => ({
+        ...f.follower,
+        followedAt: f.createdAt,
+      })),
+      following: following.map(f => ({
+        ...f.following,
+        followedAt: f.createdAt,
+      })),
+      conversations: conversationsWithMessages.map(conv => ({
+        id: conv.id,
+        otherUser: conv.user1Id === userId ? conv.user2 : conv.user1,
+        lastMessageAt: conv.lastMessageAt,
+        lastMessageText: conv.lastMessageText,
+        messages: conv.messages,
+      })),
+    };
+    
+    console.log('[Admin API] Sending response with:', {
+      followersCount: response.followers.length,
+      followingCount: response.following.length,
+      conversationsCount: response.conversations.length,
+    });
+    
+    res.json(response);
+  } catch (error) {
+    console.error('[Admin API] Error fetching user details:', error);
+    res.status(500).json({ error: 'Failed to fetch user details' });
+  }
+});
+
+/**
  * POST /admin/users/:id/make-admin
  * Grant admin privileges to a user
  */
