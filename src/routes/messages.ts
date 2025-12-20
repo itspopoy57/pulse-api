@@ -240,29 +240,19 @@ router.post("/:userId", authMiddleware, async (req: AuthRequest, res) => {
 
     console.log(`📤 POST /messages/${receiverId} from user:`, currentUserId);
 
-    // Check if users are mutually following (optional - remove if you want open messaging)
-    const [isFollowing, isFollowingBack] = await Promise.all([
-      prisma.follow.findUnique({
-        where: {
-          followerId_followingId: {
-            followerId: currentUserId,
-            followingId: receiverId,
-          },
-        },
-      }),
-      prisma.follow.findUnique({
-        where: {
-          followerId_followingId: {
-            followerId: receiverId,
-            followingId: currentUserId,
-          },
-        },
-      }),
-    ]);
+    // Check if users have an accepted connection
+    const connection = await prisma.connection.findFirst({
+      where: {
+        OR: [
+          { requesterId: currentUserId, receiverId: receiverId, status: "ACCEPTED" },
+          { requesterId: receiverId, receiverId: currentUserId, status: "ACCEPTED" },
+        ],
+      },
+    });
 
-    if (!isFollowing || !isFollowingBack) {
-      return res.status(403).json({ 
-        error: "You can only message users you both follow each other" 
+    if (!connection) {
+      return res.status(403).json({
+        error: "You can only message users you're connected with"
       });
     }
 
@@ -680,6 +670,157 @@ router.get("/admin/conversation/:conversationId", authMiddleware, requireAdmin, 
   } catch (err) {
     console.error("DELETE /messages/:messageId error:", err);
     res.status(500).json({ error: "Failed to delete message" });
+  }
+});
+
+// ----------------------------------------------------
+//  MESSAGE REACTIONS
+// ----------------------------------------------------
+
+// POST /messages/:messageId/react - Add or toggle reaction to a message
+router.post("/:messageId/react", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const messageId = Number(req.params.messageId);
+    if (Number.isNaN(messageId)) {
+      return res.status(400).json({ error: "Invalid message ID" });
+    }
+
+    const { emoji } = req.body;
+    if (!emoji || typeof emoji !== 'string') {
+      return res.status(400).json({ error: "Emoji is required" });
+    }
+
+    console.log(`👍 POST /messages/${messageId}/react by user:`, currentUserId, "emoji:", emoji);
+
+    // Find the message
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message || message.isDeleted) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+
+    // Check if user is part of this conversation
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: message.conversationId },
+    });
+
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+
+    if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+      return res.status(403).json({ error: "You are not part of this conversation" });
+    }
+
+    // Check if user already reacted with this emoji
+    const existing = await prisma.messageReaction.findUnique({
+      where: {
+        messageId_userId_emoji: {
+          messageId,
+          userId: currentUserId,
+          emoji,
+        },
+      },
+    });
+
+    if (existing) {
+      // Remove reaction (toggle off)
+      await prisma.messageReaction.delete({
+        where: { id: existing.id },
+      });
+      
+      return res.json({ ok: true, action: "removed" });
+    } else {
+      // Add reaction
+      await prisma.messageReaction.create({
+        data: {
+          messageId,
+          userId: currentUserId,
+          emoji,
+        },
+      });
+      
+      return res.json({ ok: true, action: "added" });
+    }
+  } catch (err) {
+    console.error("POST /messages/:messageId/react error:", err);
+    res.status(500).json({ error: "Failed to react to message" });
+  }
+});
+
+// GET /messages/:messageId/reactions - Get all reactions for a message
+router.get("/:messageId/reactions", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const messageId = Number(req.params.messageId);
+    if (Number.isNaN(messageId)) {
+      return res.status(400).json({ error: "Invalid message ID" });
+    }
+
+    // Find the message
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+    });
+
+    if (!message) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+
+    // Check if user is part of this conversation
+    const conversation = await prisma.conversation.findUnique({
+      where: { id: message.conversationId },
+    });
+
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+
+    if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+      return res.status(403).json({ error: "You are not part of this conversation" });
+    }
+
+    // Get all reactions
+    const reactions = await prisma.messageReaction.findMany({
+      where: { messageId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+          },
+        },
+      },
+    });
+
+    // Group by emoji
+    const grouped: Record<string, any[]> = {};
+    reactions.forEach(reaction => {
+      if (!grouped[reaction.emoji]) {
+        grouped[reaction.emoji] = [];
+      }
+      grouped[reaction.emoji].push({
+        userId: String(reaction.user.id),
+        username: reaction.user.username,
+        displayName: reaction.user.displayName,
+      });
+    });
+
+    return res.json({ reactions: grouped });
+  } catch (err) {
+    console.error("GET /messages/:messageId/reactions error:", err);
+    res.status(500).json({ error: "Failed to load reactions" });
   }
 });
 

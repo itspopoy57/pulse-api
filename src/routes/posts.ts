@@ -8,6 +8,59 @@ import { POST_REPORT_HIDE_THRESHOLD } from "../constants/moderation";
 
 const router = Router();
 
+// Helper function to extract hashtags from text
+function extractHashtags(text: string): string[] {
+  const hashtagRegex = /#[\w]+/g;
+  const matches = text.match(hashtagRegex);
+  if (!matches) return [];
+  
+  // Remove # and convert to lowercase, remove duplicates
+  return [...new Set(matches.map(tag => tag.slice(1).toLowerCase()))];
+}
+
+// Helper function to create or link hashtags to a post
+async function linkHashtagsToPost(postId: number, text: string) {
+  const hashtags = extractHashtags(text);
+  
+  for (const tag of hashtags) {
+    // Find or create hashtag
+    let hashtag = await prisma.hashtag.findUnique({
+      where: { tag },
+    });
+    
+    if (!hashtag) {
+      hashtag = await prisma.hashtag.create({
+        data: { tag, useCount: 0 },
+      });
+    }
+    
+    // Link to post (if not already linked)
+    const existing = await prisma.postHashtag.findUnique({
+      where: {
+        postId_hashtagId: {
+          postId,
+          hashtagId: hashtag.id,
+        },
+      },
+    });
+    
+    if (!existing) {
+      await prisma.postHashtag.create({
+        data: {
+          postId,
+          hashtagId: hashtag.id,
+        },
+      });
+      
+      // Increment use count
+      await prisma.hashtag.update({
+        where: { id: hashtag.id },
+        data: { useCount: { increment: 1 } },
+      });
+    }
+  }
+}
+
 
 
 
@@ -238,7 +291,7 @@ router.post(
               endsAt: pollData.endsAt ? new Date(pollData.endsAt) : undefined,
             },
           });
-
+  
           // Create poll options
           await Promise.all(
             pollData.options.map((optText: string, index: number) =>
@@ -252,7 +305,38 @@ router.post(
             )
           );
         }
-
+  
+        // Extract and link hashtags from title and body
+        const textToScan = `${title} ${textBody || ''}`;
+        const hashtags = extractHashtags(textToScan);
+        
+        for (const tag of hashtags) {
+          // Find or create hashtag
+          let hashtag = await tx.hashtag.findUnique({
+            where: { tag },
+          });
+          
+          if (!hashtag) {
+            hashtag = await tx.hashtag.create({
+              data: { tag, useCount: 0 },
+            });
+          }
+          
+          // Link to post
+          await tx.postHashtag.create({
+            data: {
+              postId: post.id,
+              hashtagId: hashtag.id,
+            },
+          });
+          
+          // Increment use count
+          await tx.hashtag.update({
+            where: { id: hashtag.id },
+            data: { useCount: { increment: 1 } },
+          });
+        }
+  
         // Fetch complete post with includes
         return await tx.post.findUnique({
           where: { id: post.id },
@@ -1044,7 +1128,59 @@ router.post("/:id/react", authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
+// ----------------------------------------------------
+//  HASHTAG ENDPOINTS
+// ----------------------------------------------------
 
+// GET /posts/hashtags/trending - Get trending hashtags
+router.get("/hashtags/trending", async (_req, res) => {
+  try {
+    const hashtags = await prisma.hashtag.findMany({
+      orderBy: { useCount: "desc" },
+      take: 20,
+    });
 
+    res.json({
+      hashtags: hashtags.map(h => ({
+        tag: h.tag,
+        useCount: h.useCount,
+      })),
+    });
+  } catch (err) {
+    console.error("GET /posts/hashtags/trending error:", err);
+    res.status(500).json({ error: "Failed to load trending hashtags" });
+  }
+});
+
+// GET /posts/hashtags/:tag - Get posts with a specific hashtag
+router.get("/hashtags/:tag", async (req, res) => {
+  try {
+    const tag = req.params.tag.toLowerCase().replace(/^#/, '');
+    
+    const postHashtags = await prisma.postHashtag.findMany({
+      where: {
+        hashtag: { tag },
+      },
+      include: {
+        post: {
+          where: { isHidden: false },
+          include: POST_INCLUDE,
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    const posts = postHashtags
+      .map(ph => ph.post)
+      .filter(p => p !== null);
+
+    res.json({ posts: posts.map(mapPost) });
+  } catch (err) {
+    console.error("GET /posts/hashtags/:tag error:", err);
+    res.status(500).json({ error: "Failed to load posts for hashtag" });
+  }
+});
 
 export default router;

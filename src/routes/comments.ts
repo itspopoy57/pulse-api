@@ -3,7 +3,7 @@ import { Router } from "express";
 import type { Request } from "express";
 import { prisma } from "../prisma";
 import { authMiddleware, AuthRequest } from "../middleware/auth";
-import { ReactionType } from "@prisma/client";
+import { ReactionType, EmojiReactionType } from "@prisma/client";
 
 const router = Router();
 
@@ -155,8 +155,8 @@ router.post("/:id/report", authMiddleware, async (req: AuthRequest, res) => {
   }
 });
 
-// POST /comments/:id/react   body: { postId }
-// toggles a "like" on the comment and returns updated post
+// POST /comments/:id/react   body: { postId, emoji }
+// Add or update emoji reaction on comment
 router.post("/:id/react", authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId;
@@ -168,9 +168,16 @@ router.post("/:id/react", authMiddleware, async (req: AuthRequest, res) => {
     const commentId = Number(commentIdStr);
     const postIdStr = (req.body?.postId ?? "").toString();
     const postId = Number(postIdStr);
+    const emoji = req.body?.emoji as EmojiReactionType | undefined;
 
     if (Number.isNaN(commentId) || Number.isNaN(postId)) {
       return res.status(400).json({ error: "Invalid ids" });
+    }
+
+    // Validate emoji type
+    const validEmojis: EmojiReactionType[] = ['LIKE', 'LOVE', 'FIRE', 'LAUGH', 'WOW', 'SAD', 'ANGRY'];
+    if (emoji && !validEmojis.includes(emoji)) {
+      return res.status(400).json({ error: "Invalid emoji type" });
     }
 
     const comment = await prisma.comment.findUnique({
@@ -191,12 +198,13 @@ router.post("/:id/react", authMiddleware, async (req: AuthRequest, res) => {
     });
 
     if (!existing) {
-      // add like
+      // Add new reaction
       await prisma.commentReaction.create({
         data: {
           userId,
           commentId,
-          type: ReactionType.UPVOTE,
+          emoji: emoji || 'LIKE',
+          type: ReactionType.UPVOTE, // Keep for backward compatibility
         },
       });
 
@@ -206,8 +214,14 @@ router.post("/:id/react", authMiddleware, async (req: AuthRequest, res) => {
           likeCount: { increment: 1 },
         },
       });
+    } else if (emoji && existing.emoji !== emoji) {
+      // Update existing reaction to different emoji
+      await prisma.commentReaction.update({
+        where: { id: existing.id },
+        data: { emoji },
+      });
     } else {
-      // remove like
+      // Remove reaction (same emoji clicked again)
       await prisma.commentReaction.delete({
         where: { id: existing.id },
       });
@@ -235,6 +249,62 @@ router.post("/:id/react", authMiddleware, async (req: AuthRequest, res) => {
   } catch (err) {
     console.error("POST /comments/:id/react error:", err);
     return res.status(500).json({ error: "Failed to react to comment" });
+  }
+});
+
+// GET /comments/:id/reactions - Get reaction summary for a comment
+router.get("/:id/reactions", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const userId = req.userId;
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const commentIdStr = req.params.id;
+    const commentId = Number(commentIdStr);
+
+    if (Number.isNaN(commentId)) {
+      return res.status(400).json({ error: "Invalid comment id" });
+    }
+
+    const reactions = await prisma.commentReaction.findMany({
+      where: { commentId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+          },
+        },
+      },
+    });
+
+    // Group reactions by emoji type
+    const reactionSummary: Record<string, any[]> = {};
+    reactions.forEach((reaction) => {
+      const emojiType = reaction.emoji || 'LIKE';
+      if (!reactionSummary[emojiType]) {
+        reactionSummary[emojiType] = [];
+      }
+      reactionSummary[emojiType].push({
+        userId: String(reaction.user.id),
+        username: reaction.user.username,
+        displayName: reaction.user.displayName,
+      });
+    });
+
+    // Get user's reaction
+    const userReaction = reactions.find((r) => r.userId === userId);
+
+    return res.json({
+      reactions: reactionSummary,
+      userReaction: userReaction?.emoji || null,
+      totalCount: reactions.length,
+    });
+  } catch (err) {
+    console.error("GET /comments/:id/reactions error:", err);
+    return res.status(500).json({ error: "Failed to get reactions" });
   }
 });
 

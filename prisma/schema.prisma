@@ -44,6 +44,9 @@ model User {
   bio          String?
   avatarUrl    String?
 
+  // preferences
+  theme        String?  @default("dark") // 'dark' or 'light'
+
   // push notifications
   pushToken    String?
   pushPlatform String?  // 'ios' or 'android'
@@ -51,7 +54,7 @@ model User {
   
   // notification preferences
   notifyMessages   Boolean @default(true)
-  notifyFollows    Boolean @default(true)
+  notifyConnections Boolean @default(true)
   notifyComments   Boolean @default(true)
   notifyReactions  Boolean @default(true)
   notifyMentions   Boolean @default(true)
@@ -67,9 +70,9 @@ model User {
   // bookmarks
   savedPosts   SavedPost[]
 
-  // follow system
-  followers    Follow[] @relation("UserFollowers")
-  following    Follow[] @relation("UserFollowing")
+  // connection system (like LinkedIn)
+  sentConnections     Connection[] @relation("ConnectionRequester")
+  receivedConnections Connection[] @relation("ConnectionReceiver")
   
   // poll votes
   pollVotes    PollVote[]
@@ -79,6 +82,7 @@ model User {
   receivedMessages Message[] @relation("MessageReceiver")
   conversations1   Conversation[] @relation("ConversationUser1")
   conversations2   Conversation[] @relation("ConversationUser2")
+  messageReactions MessageReaction[]
   
   // group messaging
   groupMemberships GroupMember[]
@@ -89,6 +93,10 @@ model User {
   
   // notifications
   notifications    Notification[]
+  
+  // blocking
+  blockedUsers     BlockedUser[] @relation("BlockerUser")
+  blockedByUsers   BlockedUser[] @relation("BlockedUser")
 }
 
 model Poll {
@@ -182,8 +190,13 @@ model Post {
 
   // who bookmarked this
   savedBy       SavedPost[]
+  
+  // hashtags
+  hashtags      PostHashtag[]
 
   createdAt     DateTime   @default(now())
+  
+  @@index([createdAt])
 }
 
 model Comment {
@@ -244,18 +257,32 @@ model VsVote {
   @@unique([userId, postId])
 }
 
-// one like per user per comment
-model CommentReaction {
-  id        Int          @id @default(autoincrement())
-  type      ReactionType
+// Enhanced comment reactions with emoji types
+enum EmojiReactionType {
+  LIKE      // 👍
+  LOVE      // ❤️
+  FIRE      // 🔥
+  LAUGH     // 😂
+  WOW       // 😮
+  SAD       // 😢
+  ANGRY     // 😠
+}
 
-  user      User         @relation(fields: [userId], references: [id])
+model CommentReaction {
+  id        Int                @id @default(autoincrement())
+  type      ReactionType?      // Keep for backward compatibility
+  emoji     EmojiReactionType? // New emoji reactions
+
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    Int
 
-  comment   Comment      @relation(fields: [commentId], references: [id])
+  comment   Comment            @relation(fields: [commentId], references: [id], onDelete: Cascade)
   commentId Int
+  
+  createdAt DateTime           @default(now())
 
   @@unique([userId, commentId])
+  @@index([commentId])
 }
 
 // saved posts (bookmarks)
@@ -272,20 +299,33 @@ model SavedPost {
   @@unique([userId, postId])
 }
 
-model Follow {
-  id          Int      @id @default(autoincrement())
+enum ConnectionStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
 
-  // who is following
-  follower    User     @relation("UserFollowing", fields: [followerId], references: [id])
-  followerId  Int
+model Connection {
+  id          Int              @id @default(autoincrement())
 
-  // who is being followed
-  following   User     @relation("UserFollowers", fields: [followingId], references: [id])
-  followingId Int
+  // who sent the connection request
+  requester   User             @relation("ConnectionRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  requesterId Int
 
-  createdAt   DateTime @default(now())
+  // who received the connection request
+  receiver    User             @relation("ConnectionReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  receiverId  Int
 
-  @@unique([followerId, followingId])
+  status      ConnectionStatus @default(PENDING)
+  
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  acceptedAt  DateTime?
+
+  @@unique([requesterId, receiverId])
+  @@index([requesterId])
+  @@index([receiverId])
+  @@index([status])
 }
 
 // Conversations between two users
@@ -351,6 +391,28 @@ model Message {
   @@index([receiverId])
   @@index([createdAt])
   @@index([isDeleted])
+  
+  // message reactions
+  reactions MessageReaction[]
+}
+
+// Message reactions
+model MessageReaction {
+  id        Int                @id @default(autoincrement())
+  
+  message   Message            @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId Int
+  
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    Int
+  
+  emoji     String             // Emoji character (e.g., "👍", "❤️", "😂")
+  
+  createdAt DateTime           @default(now())
+  
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@index([userId])
 }
 
 // In-app notifications
@@ -504,4 +566,59 @@ model GroupTyping {
   @@unique([groupId, userId])
   @@index([groupId])
   @@index([updatedAt])
+}
+
+// Hashtags
+model Hashtag {
+  id        Int           @id @default(autoincrement())
+  name      String        @unique // lowercase, no # symbol
+  
+  posts     PostHashtag[]
+  
+  // Metadata
+  useCount  Int           @default(0)
+  
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  
+  @@index([name])
+  @@index([useCount])
+}
+
+// Many-to-many relationship between posts and hashtags
+model PostHashtag {
+  id        Int      @id @default(autoincrement())
+  
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postId    Int
+  
+  hashtag   Hashtag  @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+  hashtagId Int
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([postId, hashtagId])
+  @@index([postId])
+  @@index([hashtagId])
+}
+
+// Blocked users
+model BlockedUser {
+  id        Int      @id @default(autoincrement())
+  
+  // who is doing the blocking
+  blocker   User     @relation("BlockerUser", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockerId Int
+  
+  // who is being blocked
+  blocked   User     @relation("BlockedUser", fields: [blockedId], references: [id], onDelete: Cascade)
+  blockedId Int
+  
+  reason    String?  // Optional reason for blocking
+  
+  createdAt DateTime @default(now())
+  
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
 }

@@ -112,14 +112,24 @@ router.get("/me", authMiddleware, async (req: AuthRequest, res) => {
     const user = await prisma.user.findUnique({
       where: { id: currentUserId },
       include: {
-        followers: true,
-        following: true,
+        sentConnections: true,
+        receivedConnections: true,
       },
     });
 
     if (!user) {
       return res.status(404).json({ error: "User not found" });
     }
+
+    // Count accepted connections
+    const connectionCount = await prisma.connection.count({
+      where: {
+        OR: [
+          { requesterId: currentUserId, status: "ACCEPTED" },
+          { receiverId: currentUserId, status: "ACCEPTED" },
+        ],
+      },
+    });
 
     const { passwordHash, ...rest } = user;
 
@@ -133,8 +143,7 @@ router.get("/me", authMiddleware, async (req: AuthRequest, res) => {
         bio: user.bio,
         avatarUrl: user.avatarUrl,
         createdAt: user.createdAt.toISOString(),
-        followerCount: user.followers.length,
-        followingCount: user.following.length,
+        connectionCount,
         // isMe is always true here
         isMe: true,
       },
@@ -163,9 +172,15 @@ router.patch("/me", authMiddleware, async (req: AuthRequest, res) => {
         region,
         avatarUrl,
       },
-      include: {
-        followers: true,
-        following: true,
+    });
+
+    // Count accepted connections
+    const connectionCount = await prisma.connection.count({
+      where: {
+        OR: [
+          { requesterId: currentUserId, status: "ACCEPTED" },
+          { receiverId: currentUserId, status: "ACCEPTED" },
+        ],
       },
     });
 
@@ -181,8 +196,7 @@ router.patch("/me", authMiddleware, async (req: AuthRequest, res) => {
         bio: user.bio,
         avatarUrl: user.avatarUrl,
         createdAt: user.createdAt.toISOString(),
-        followerCount: user.followers.length,
-        followingCount: user.following.length,
+        connectionCount,
         isMe: true,
       },
     });
@@ -193,7 +207,7 @@ router.patch("/me", authMiddleware, async (req: AuthRequest, res) => {
 });
 
 // ----------------------------------------------------
-//  GET CONNECTIONS (MUTUAL FOLLOWS)
+//  GET CONNECTIONS (ACCEPTED CONNECTIONS)
 // ----------------------------------------------------
 
 // GET /users/connections
@@ -206,13 +220,25 @@ router.get("/connections", authMiddleware, async (req: AuthRequest, res) => {
 
     console.log("🤝 GET /users/connections for user:", currentUserId);
 
-    // Get all users where both follow each other
-    const mutualFollows = await prisma.follow.findMany({
+    // Get all accepted connections
+    const connections = await prisma.connection.findMany({
       where: {
-        followerId: currentUserId,
+        OR: [
+          { requesterId: currentUserId, status: "ACCEPTED" },
+          { receiverId: currentUserId, status: "ACCEPTED" },
+        ],
       },
       include: {
-        following: {
+        requester: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            bio: true,
+          },
+        },
+        receiver: {
           select: {
             id: true,
             username: true,
@@ -224,43 +250,37 @@ router.get("/connections", authMiddleware, async (req: AuthRequest, res) => {
       },
     });
 
-    // Filter to only mutual connections
-    const connections = await Promise.all(
-      mutualFollows.map(async (follow) => {
-        const isFollowingBack = await prisma.follow.findUnique({
+    const usersWithConnectionInfo = await Promise.all(
+      connections.map(async (connection) => {
+        // Get the other user in the connection
+        const otherUser =
+          connection.requesterId === currentUserId
+            ? connection.receiver
+            : connection.requester;
+
+        const connectionCount = await prisma.connection.count({
           where: {
-            followerId_followingId: {
-              followerId: follow.followingId,
-              followingId: currentUserId,
-            },
+            OR: [
+              { requesterId: otherUser.id, status: "ACCEPTED" },
+              { receiverId: otherUser.id, status: "ACCEPTED" },
+            ],
           },
         });
 
-        if (!isFollowingBack) return null;
-
-        const [followerCount, followingCount] = await Promise.all([
-          prisma.follow.count({ where: { followingId: follow.followingId } }),
-          prisma.follow.count({ where: { followerId: follow.followingId } }),
-        ]);
-
         return {
-          id: String(follow.following.id),
-          username: follow.following.username,
-          displayName: follow.following.displayName,
-          avatarUrl: follow.following.avatarUrl,
-          bio: follow.following.bio,
-          followerCount,
-          followingCount,
-          isFollowing: true,
-          isFollowingBack: true,
-          isMutual: true,
+          id: String(otherUser.id),
+          username: otherUser.username,
+          displayName: otherUser.displayName,
+          avatarUrl: otherUser.avatarUrl,
+          bio: otherUser.bio,
+          connectionCount,
+          isConnected: true,
+          connectionStatus: "ACCEPTED",
         };
       })
     );
 
-    const filteredConnections = connections.filter((c) => c !== null);
-
-    return res.json({ users: filteredConnections });
+    return res.json({ users: usersWithConnectionInfo });
   } catch (err) {
     console.error("GET /users/connections error:", err);
     res.status(500).json({ error: "Failed to load connections" });
@@ -268,25 +288,27 @@ router.get("/connections", authMiddleware, async (req: AuthRequest, res) => {
 });
 
 // ----------------------------------------------------
-//  GET FOLLOWING LIST
+//  GET PENDING CONNECTION REQUESTS
 // ----------------------------------------------------
 
-// GET /users/following
-router.get("/following", authMiddleware, async (req: AuthRequest, res) => {
+// GET /users/connection-requests
+router.get("/connection-requests", authMiddleware, async (req: AuthRequest, res) => {
   try {
     const currentUserId = req.userId;
     if (!currentUserId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    console.log("✓ GET /users/following for user:", currentUserId);
+    console.log("📬 GET /users/connection-requests for user:", currentUserId);
 
-    const following = await prisma.follow.findMany({
+    // Get pending requests received by current user
+    const requests = await prisma.connection.findMany({
       where: {
-        followerId: currentUserId,
+        receiverId: currentUserId,
+        status: "PENDING",
       },
       include: {
-        following: {
+        requester: {
           select: {
             id: true,
             username: true,
@@ -296,42 +318,40 @@ router.get("/following", authMiddleware, async (req: AuthRequest, res) => {
           },
         },
       },
+      orderBy: {
+        createdAt: "desc",
+      },
     });
 
-    const usersWithFollowInfo = await Promise.all(
-      following.map(async (follow) => {
-        const [followerCount, followingCount, isFollowingBack] = await Promise.all([
-          prisma.follow.count({ where: { followingId: follow.followingId } }),
-          prisma.follow.count({ where: { followerId: follow.followingId } }),
-          prisma.follow.findUnique({
-            where: {
-              followerId_followingId: {
-                followerId: follow.followingId,
-                followingId: currentUserId,
-              },
-            },
-          }),
-        ]);
+    const usersWithConnectionInfo = await Promise.all(
+      requests.map(async (request) => {
+        const connectionCount = await prisma.connection.count({
+          where: {
+            OR: [
+              { requesterId: request.requester.id, status: "ACCEPTED" },
+              { receiverId: request.requester.id, status: "ACCEPTED" },
+            ],
+          },
+        });
 
         return {
-          id: String(follow.following.id),
-          username: follow.following.username,
-          displayName: follow.following.displayName,
-          avatarUrl: follow.following.avatarUrl,
-          bio: follow.following.bio,
-          followerCount,
-          followingCount,
-          isFollowing: true,
-          isFollowingBack: !!isFollowingBack,
-          isMutual: !!isFollowingBack,
+          id: String(request.requester.id),
+          username: request.requester.username,
+          displayName: request.requester.displayName,
+          avatarUrl: request.requester.avatarUrl,
+          bio: request.requester.bio,
+          connectionCount,
+          connectionStatus: "PENDING",
+          requestId: String(request.id),
+          requestedAt: request.createdAt.toISOString(),
         };
       })
     );
 
-    return res.json({ users: usersWithFollowInfo });
+    return res.json({ users: usersWithConnectionInfo });
   } catch (err) {
-    console.error("GET /users/following error:", err);
-    res.status(500).json({ error: "Failed to load following list" });
+    console.error("GET /users/connection-requests error:", err);
+    res.status(500).json({ error: "Failed to load connection requests" });
   }
 });
 
@@ -379,30 +399,39 @@ router.get("/search", authMiddleware, async (req: AuthRequest, res) => {
       },
     });
 
-    // Get follow relationships for each user
-    const usersWithFollowInfo = await Promise.all(
+    // Get connection status for each user
+    const usersWithConnectionInfo = await Promise.all(
       users.map(async (user) => {
-        const [followerCount, followingCount, isFollowing, isFollowingBack] =
-          await Promise.all([
-            prisma.follow.count({ where: { followingId: user.id } }),
-            prisma.follow.count({ where: { followerId: user.id } }),
-            prisma.follow.findUnique({
-              where: {
-                followerId_followingId: {
-                  followerId: currentUserId,
-                  followingId: user.id,
-                },
-              },
-            }),
-            prisma.follow.findUnique({
-              where: {
-                followerId_followingId: {
-                  followerId: user.id,
-                  followingId: currentUserId,
-                },
-              },
-            }),
-          ]);
+        const [connectionCount, existingConnection] = await Promise.all([
+          prisma.connection.count({
+            where: {
+              OR: [
+                { requesterId: user.id, status: "ACCEPTED" },
+                { receiverId: user.id, status: "ACCEPTED" },
+              ],
+            },
+          }),
+          prisma.connection.findFirst({
+            where: {
+              OR: [
+                { requesterId: currentUserId, receiverId: user.id },
+                { requesterId: user.id, receiverId: currentUserId },
+              ],
+            },
+          }),
+        ]);
+
+        let connectionStatus = "NONE";
+        let isPending = false;
+        let isConnected = false;
+        let sentByMe = false;
+
+        if (existingConnection) {
+          connectionStatus = existingConnection.status;
+          isPending = existingConnection.status === "PENDING";
+          isConnected = existingConnection.status === "ACCEPTED";
+          sentByMe = existingConnection.requesterId === currentUserId;
+        }
 
         return {
           id: String(user.id),
@@ -410,16 +439,16 @@ router.get("/search", authMiddleware, async (req: AuthRequest, res) => {
           displayName: user.displayName,
           avatarUrl: user.avatarUrl,
           bio: user.bio,
-          followerCount,
-          followingCount,
-          isFollowing: !!isFollowing,
-          isFollowingBack: !!isFollowingBack,
-          isMutual: !!isFollowing && !!isFollowingBack,
+          connectionCount,
+          connectionStatus,
+          isConnected,
+          isPending,
+          sentByMe,
         };
       })
     );
 
-    return res.json({ users: usersWithFollowInfo });
+    return res.json({ users: usersWithConnectionInfo });
   } catch (err) {
     console.error("GET /users/search error:", err);
     res.status(500).json({ error: "Failed to search users" });
@@ -456,19 +485,37 @@ router.get("/:id/profile", authMiddleware, async (req: AuthRequest, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // follower / following counts + whether current user follows them
-    const [followerCount, followingCount, existingFollow] = await Promise.all([
-      prisma.follow.count({ where: { followingId: user.id } }),
-      prisma.follow.count({ where: { followerId: user.id } }),
-      prisma.follow.findUnique({
+    // Get connection count and status
+    const [connectionCount, existingConnection] = await Promise.all([
+      prisma.connection.count({
         where: {
-          followerId_followingId: {
-            followerId: currentUserId,
-            followingId: user.id,
-          },
+          OR: [
+            { requesterId: user.id, status: "ACCEPTED" },
+            { receiverId: user.id, status: "ACCEPTED" },
+          ],
+        },
+      }),
+      prisma.connection.findFirst({
+        where: {
+          OR: [
+            { requesterId: currentUserId, receiverId: user.id },
+            { requesterId: user.id, receiverId: currentUserId },
+          ],
         },
       }),
     ]);
+
+    let connectionStatus = "NONE";
+    let isPending = false;
+    let isConnected = false;
+    let sentByMe = false;
+
+    if (existingConnection) {
+      connectionStatus = existingConnection.status;
+      isPending = existingConnection.status === "PENDING";
+      isConnected = existingConnection.status === "ACCEPTED";
+      sentByMe = existingConnection.requesterId === currentUserId;
+    }
 
     const posts = await prisma.post.findMany({
       where: {
@@ -490,10 +537,12 @@ router.get("/:id/profile", authMiddleware, async (req: AuthRequest, res) => {
         bio: user.bio,
         avatarUrl: user.avatarUrl,
         createdAt: user.createdAt.toISOString(),
-        followerCount,
-        followingCount,
+        connectionCount,
         isMe: currentUserId === user.id,
-        isFollowing: !!existingFollow,
+        connectionStatus,
+        isConnected,
+        isPending,
+        sentByMe,
       },
       posts: posts.map(mapPost),
     };
@@ -506,97 +555,261 @@ router.get("/:id/profile", authMiddleware, async (req: AuthRequest, res) => {
 });
 
 // ----------------------------------------------------
-//  FOLLOW / UNFOLLOW  (/users/:id/follow-toggle)
+//  CONNECTION MANAGEMENT
 // ----------------------------------------------------
 
-router.post(
-  "/:id/follow-toggle",
-  authMiddleware,
-  async (req: AuthRequest, res) => {
-    try {
-      const currentUserId = req.userId;
-      if (!currentUserId) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
+// POST /users/:id/connect - Send connection request
+router.post("/:id/connect", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
-      const idStr = req.params.id;
-      const targetUserId = Number(idStr);
+    const idStr = req.params.id;
+    const targetUserId = Number(idStr);
 
-      console.log(
-        "POST /users/:id/follow-toggle -> currentUser:",
-        currentUserId,
-        "target:",
-        idStr,
-        "parsed:",
-        targetUserId
-      );
+    console.log(
+      "POST /users/:id/connect -> currentUser:",
+      currentUserId,
+      "target:",
+      idStr,
+      "parsed:",
+      targetUserId
+    );
 
-      if (Number.isNaN(targetUserId)) {
-        return res.status(400).json({ error: "Invalid user id" });
-      }
+    if (Number.isNaN(targetUserId)) {
+      return res.status(400).json({ error: "Invalid user id" });
+    }
 
-      if (targetUserId === currentUserId) {
-        return res.status(400).json({ error: "Cannot follow yourself" });
-      }
+    if (targetUserId === currentUserId) {
+      return res.status(400).json({ error: "Cannot connect with yourself" });
+    }
 
-      const targetUser = await prisma.user.findUnique({
-        where: { id: targetUserId },
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+    });
+
+    if (!targetUser) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // Check if connection already exists
+    const existing = await prisma.connection.findFirst({
+      where: {
+        OR: [
+          { requesterId: currentUserId, receiverId: targetUserId },
+          { requesterId: targetUserId, receiverId: currentUserId },
+        ],
+      },
+    });
+
+    if (existing) {
+      return res.status(400).json({ 
+        error: "Connection request already exists",
+        status: existing.status 
       });
+    }
 
-      if (!targetUser) {
-        return res.status(404).json({ error: "User not found" });
-      }
+    // Create connection request
+    const connection = await prisma.connection.create({
+      data: {
+        requesterId: currentUserId,
+        receiverId: targetUserId,
+        status: "PENDING",
+      },
+    });
 
-      const existing = await prisma.follow.findUnique({
-        where: {
-          followerId_followingId: {
-            followerId: currentUserId,
-            followingId: targetUserId,
-          },
+    // Send notification to the target user
+    const requester = await prisma.user.findUnique({
+      where: { id: currentUserId },
+    });
+    
+    if (requester) {
+      const requesterName = requester.displayName || requester.username || 'Someone';
+      
+      // Create in-app notification
+      await prisma.notification.create({
+        data: {
+          userId: targetUserId,
+          type: 'connection_request',
+          title: 'New Connection Request',
+          body: `${requesterName} wants to connect with you`,
+          fromUserId: currentUserId,
         },
       });
-
-      let following: boolean;
-
-      if (!existing) {
-        await prisma.follow.create({
-          data: {
-            followerId: currentUserId,
-            followingId: targetUserId,
-          },
-        });
-        following = true;
-        
-        // Send notification to the followed user
-        const follower = await prisma.user.findUnique({
-          where: { id: currentUserId },
-        });
-        if (follower) {
-          const followerName = follower.displayName || follower.username || 'Someone';
-          await notifyNewFollower(targetUserId, currentUserId, followerName);
-        }
-      } else {
-        await prisma.follow.delete({
-          where: { id: existing.id },
-        });
-        following = false;
+      
+      // Send push notification if enabled
+      if (targetUser.notifyConnections && targetUser.pushToken) {
+        await notifyNewFollower(targetUserId, currentUserId, requesterName);
       }
-
-      const followerCount = await prisma.follow.count({
-        where: { followingId: targetUserId },
-      });
-
-      return res.json({
-        ok: true,
-        following,
-        followerCount,
-      });
-    } catch (err) {
-      console.error("POST /users/:id/follow-toggle error:", err);
-      res.status(500).json({ error: "Failed to toggle follow" });
     }
+
+    return res.json({
+      ok: true,
+      connectionStatus: "PENDING",
+      isPending: true,
+      sentByMe: true,
+    });
+  } catch (err) {
+    console.error("POST /users/:id/connect error:", err);
+    res.status(500).json({ error: "Failed to send connection request" });
   }
-);
+});
+
+// POST /users/:id/accept-connection - Accept connection request
+router.post("/:id/accept-connection", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const idStr = req.params.id;
+    const requesterId = Number(idStr);
+
+    if (Number.isNaN(requesterId)) {
+      return res.status(400).json({ error: "Invalid user id" });
+    }
+
+    // Find the pending connection request
+    const connection = await prisma.connection.findFirst({
+      where: {
+        requesterId: requesterId,
+        receiverId: currentUserId,
+        status: "PENDING",
+      },
+    });
+
+    if (!connection) {
+      return res.status(404).json({ error: "Connection request not found" });
+    }
+
+    // Update connection status to ACCEPTED
+    await prisma.connection.update({
+      where: { id: connection.id },
+      data: {
+        status: "ACCEPTED",
+        acceptedAt: new Date(),
+      },
+    });
+
+    // Send notification to requester
+    const receiver = await prisma.user.findUnique({
+      where: { id: currentUserId },
+    });
+    
+    if (receiver) {
+      const receiverName = receiver.displayName || receiver.username || 'Someone';
+      
+      await prisma.notification.create({
+        data: {
+          userId: requesterId,
+          type: 'connection_accepted',
+          title: 'Connection Accepted',
+          body: `${receiverName} accepted your connection request`,
+          fromUserId: currentUserId,
+        },
+      });
+    }
+
+    return res.json({
+      ok: true,
+      connectionStatus: "ACCEPTED",
+      isConnected: true,
+    });
+  } catch (err) {
+    console.error("POST /users/:id/accept-connection error:", err);
+    res.status(500).json({ error: "Failed to accept connection" });
+  }
+});
+
+// POST /users/:id/reject-connection - Reject connection request
+router.post("/:id/reject-connection", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const idStr = req.params.id;
+    const requesterId = Number(idStr);
+
+    if (Number.isNaN(requesterId)) {
+      return res.status(400).json({ error: "Invalid user id" });
+    }
+
+    // Find the pending connection request
+    const connection = await prisma.connection.findFirst({
+      where: {
+        requesterId: requesterId,
+        receiverId: currentUserId,
+        status: "PENDING",
+      },
+    });
+
+    if (!connection) {
+      return res.status(404).json({ error: "Connection request not found" });
+    }
+
+    // Delete the connection request
+    await prisma.connection.delete({
+      where: { id: connection.id },
+    });
+
+    return res.json({
+      ok: true,
+      connectionStatus: "NONE",
+    });
+  } catch (err) {
+    console.error("POST /users/:id/reject-connection error:", err);
+    res.status(500).json({ error: "Failed to reject connection" });
+  }
+});
+
+// DELETE /users/:id/disconnect - Remove connection
+router.delete("/:id/disconnect", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const idStr = req.params.id;
+    const otherUserId = Number(idStr);
+
+    if (Number.isNaN(otherUserId)) {
+      return res.status(400).json({ error: "Invalid user id" });
+    }
+
+    // Find the connection
+    const connection = await prisma.connection.findFirst({
+      where: {
+        OR: [
+          { requesterId: currentUserId, receiverId: otherUserId },
+          { requesterId: otherUserId, receiverId: currentUserId },
+        ],
+      },
+    });
+
+    if (!connection) {
+      return res.status(404).json({ error: "Connection not found" });
+    }
+
+    // Delete the connection
+    await prisma.connection.delete({
+      where: { id: connection.id },
+    });
+
+    return res.json({
+      ok: true,
+      connectionStatus: "NONE",
+    });
+  } catch (err) {
+    console.error("DELETE /users/:id/disconnect error:", err);
+    res.status(500).json({ error: "Failed to disconnect" });
+  }
+});
 
 // ----------------------------------------------------
 //  PUSH NOTIFICATIONS
@@ -639,13 +852,13 @@ router.put("/notification-preferences", authMiddleware, async (req: AuthRequest,
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const { messages, follows, comments, reactions, mentions } = req.body;
+    const { messages, connections, comments, reactions, mentions } = req.body;
 
     await prisma.user.update({
       where: { id: currentUserId },
       data: {
         notifyMessages: messages ?? true,
-        notifyFollows: follows ?? true,
+        notifyConnections: connections ?? true,
         notifyComments: comments ?? true,
         notifyReactions: reactions ?? true,
         notifyMentions: mentions ?? true,
@@ -747,6 +960,144 @@ router.get("/notifications/unread-count", authMiddleware, async (req: AuthReques
   } catch (err) {
     console.error("GET /users/notifications/unread-count error:", err);
     res.status(500).json({ error: "Failed to get unread count" });
+  }
+});
+
+// ----------------------------------------------------
+//  BLOCK USERS
+// ----------------------------------------------------
+
+// POST /users/:id/block - Block a user
+router.post("/:id/block", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const targetUserId = Number(req.params.id);
+    if (Number.isNaN(targetUserId)) {
+      return res.status(400).json({ error: "Invalid user id" });
+    }
+
+    if (targetUserId === currentUserId) {
+      return res.status(400).json({ error: "Cannot block yourself" });
+    }
+
+    // Check if already blocked
+    const existing = await prisma.blockedUser.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: currentUserId,
+          blockedId: targetUserId,
+        },
+      },
+    });
+
+    if (existing) {
+      return res.status(400).json({ error: "User already blocked" });
+    }
+
+    // Create block
+    await prisma.blockedUser.create({
+      data: {
+        blockerId: currentUserId,
+        blockedId: targetUserId,
+      },
+    });
+
+    // Remove any existing connection
+    await prisma.connection.deleteMany({
+      where: {
+        OR: [
+          { requesterId: currentUserId, receiverId: targetUserId },
+          { requesterId: targetUserId, receiverId: currentUserId },
+        ],
+      },
+    });
+
+    return res.json({ ok: true, isBlocked: true });
+  } catch (err) {
+    console.error("POST /users/:id/block error:", err);
+    res.status(500).json({ error: "Failed to block user" });
+  }
+});
+
+// DELETE /users/:id/unblock - Unblock a user
+router.delete("/:id/unblock", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const targetUserId = Number(req.params.id);
+    if (Number.isNaN(targetUserId)) {
+      return res.status(400).json({ error: "Invalid user id" });
+    }
+
+    // Find and delete block
+    const block = await prisma.blockedUser.findUnique({
+      where: {
+        blockerId_blockedId: {
+          blockerId: currentUserId,
+          blockedId: targetUserId,
+        },
+      },
+    });
+
+    if (!block) {
+      return res.status(404).json({ error: "User not blocked" });
+    }
+
+    await prisma.blockedUser.delete({
+      where: { id: block.id },
+    });
+
+    return res.json({ ok: true, isBlocked: false });
+  } catch (err) {
+    console.error("DELETE /users/:id/unblock error:", err);
+    res.status(500).json({ error: "Failed to unblock user" });
+  }
+});
+
+// GET /users/blocked - Get list of blocked users
+router.get("/blocked", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const blocks = await prisma.blockedUser.findMany({
+      where: { blockerId: currentUserId },
+      include: {
+        blocked: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            bio: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const users = blocks.map(block => ({
+      id: String(block.blocked.id),
+      username: block.blocked.username,
+      displayName: block.blocked.displayName,
+      avatarUrl: block.blocked.avatarUrl,
+      bio: block.blocked.bio,
+      blockedAt: block.createdAt.toISOString(),
+    }));
+
+    return res.json({ users });
+  } catch (err) {
+    console.error("GET /users/blocked error:", err);
+    res.status(500).json({ error: "Failed to load blocked users" });
   }
 });
 
