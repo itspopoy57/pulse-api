@@ -571,7 +571,7 @@ model GroupTyping {
 // Hashtags
 model Hashtag {
   id        Int           @id @default(autoincrement())
-  name      String        @unique // lowercase, no # symbol
+  tag       String        @unique // lowercase, no # symbol
   
   posts     PostHashtag[]
   
@@ -581,7 +581,7 @@ model Hashtag {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   
-  @@index([name])
+  @@index([tag])
   @@index([useCount])
 }
 
