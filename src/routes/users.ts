@@ -366,7 +366,7 @@ router.get("/connection-requests", authMiddleware, async (req: AuthRequest, res)
 //  GET FOLLOWING USERS
 // ----------------------------------------------------
 
-// GET /users/following - Get users that current user is following
+// GET /users/following - Get users that current user is following (uses connections)
 router.get("/following", authMiddleware, async (req: AuthRequest, res) => {
   try {
     const currentUserId = req.userId;
@@ -376,11 +376,26 @@ router.get("/following", authMiddleware, async (req: AuthRequest, res) => {
 
     console.log("✓ GET /users/following for user:", currentUserId);
 
-    // Get all users the current user is following
-    const follows = await prisma.follow.findMany({
-      where: { followerId: currentUserId },
+    // Use connections instead of follow (Follow table doesn't exist in production)
+    // Return accepted connections as "following"
+    const connections = await prisma.connection.findMany({
+      where: {
+        OR: [
+          { requesterId: currentUserId, status: "ACCEPTED" },
+          { receiverId: currentUserId, status: "ACCEPTED" },
+        ],
+      },
       include: {
-        following: {
+        requester: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            bio: true,
+          },
+        },
+        receiver: {
           select: {
             id: true,
             username: true,
@@ -394,25 +409,20 @@ router.get("/following", authMiddleware, async (req: AuthRequest, res) => {
     });
 
     const usersWithConnectionInfo = await Promise.all(
-      follows.map(async (follow) => {
-        const user = follow.following;
-        
-        // Check if they follow back (mutual)
-        const followsBack = await prisma.follow.findFirst({
+      connections.map(async (connection) => {
+        // Get the other user in the connection
+        const user =
+          connection.requesterId === currentUserId
+            ? connection.receiver
+            : connection.requester;
+
+        const connectionCount = await prisma.connection.count({
           where: {
-            followerId: user.id,
-            followingId: currentUserId,
+            OR: [
+              { requesterId: user.id, status: "ACCEPTED" },
+              { receiverId: user.id, status: "ACCEPTED" },
+            ],
           },
-        });
-
-        // Count their followers
-        const followerCount = await prisma.follow.count({
-          where: { followingId: user.id },
-        });
-
-        // Count who they're following
-        const followingCount = await prisma.follow.count({
-          where: { followerId: user.id },
         });
 
         return {
@@ -421,11 +431,11 @@ router.get("/following", authMiddleware, async (req: AuthRequest, res) => {
           displayName: user.displayName,
           avatarUrl: user.avatarUrl,
           bio: user.bio,
-          followerCount,
-          followingCount,
+          followerCount: connectionCount,
+          followingCount: connectionCount,
           isFollowing: true,
-          isFollowingBack: !!followsBack,
-          isMutual: !!followsBack,
+          isFollowingBack: true, // Connections are mutual
+          isMutual: true,
         };
       })
     );

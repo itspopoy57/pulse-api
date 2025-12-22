@@ -530,11 +530,27 @@ router.get('/users/:id/details', async (req: AuthRequest, res) => {
     console.log('[Admin API] User found:', { id: user.id, email: user.email });
     console.log('[Admin API] Fetching followers...');
     
-    // Get followers
-    const followers = await prisma.follow.findMany({
-      where: { followingId: userId },
+    // Get connections (Follow table doesn't exist in production)
+    const connections = await prisma.connection.findMany({
+      where: {
+        OR: [
+          { requesterId: userId, status: 'ACCEPTED' },
+          { receiverId: userId, status: 'ACCEPTED' },
+        ],
+      },
       select: {
-        follower: {
+        requesterId: true,
+        receiverId: true,
+        requester: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            email: true,
+          }
+        },
+        receiver: {
           select: {
             id: true,
             username: true,
@@ -548,28 +564,7 @@ router.get('/users/:id/details', async (req: AuthRequest, res) => {
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
-    console.log('[Admin API] Followers fetched:', followers.length);
-
-    console.log('[Admin API] Fetching following...');
-    // Get following
-    const following = await prisma.follow.findMany({
-      where: { followerId: userId },
-      select: {
-        following: {
-          select: {
-            id: true,
-            username: true,
-            displayName: true,
-            avatarUrl: true,
-            email: true,
-          }
-        },
-        createdAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
-    console.log('[Admin API] Following fetched:', following.length);
+    console.log('[Admin API] Connections fetched:', connections.length);
 
     console.log('[Admin API] Fetching conversations...');
     // Get conversations (both as user1 and user2)
@@ -646,16 +641,20 @@ router.get('/users/:id/details', async (req: AuthRequest, res) => {
     console.log('[Admin API] Messages fetched for all conversations');
 
     console.log('[Admin API] Preparing response...');
+    
+    // Map connections to followers/following format
+    const connectedUsers = connections.map(conn => {
+      const otherUser = conn.requesterId === userId ? conn.receiver : conn.requester;
+      return {
+        ...otherUser,
+        followedAt: conn.createdAt,
+      };
+    });
+    
     const response = {
       user,
-      followers: followers.map(f => ({
-        ...f.follower,
-        followedAt: f.createdAt,
-      })),
-      following: following.map(f => ({
-        ...f.following,
-        followedAt: f.createdAt,
-      })),
+      followers: connectedUsers, // Connections are mutual, so same list
+      following: connectedUsers, // Connections are mutual, so same list
       conversations: conversationsWithMessages.map(conv => ({
         id: conv.id,
         otherUser: conv.user1Id === userId ? conv.user2 : conv.user1,
@@ -666,8 +665,7 @@ router.get('/users/:id/details', async (req: AuthRequest, res) => {
     };
     
     console.log('[Admin API] Sending response with:', {
-      followersCount: response.followers.length,
-      followingCount: response.following.length,
+      connectionsCount: connectedUsers.length,
       conversationsCount: response.conversations.length,
     });
     

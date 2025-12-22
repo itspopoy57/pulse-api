@@ -704,7 +704,7 @@ router.get("/mine", authMiddleware, async (req: AuthRequest, res) => {
 });
 
 
-// GET /posts/following
+// GET /posts/following - Uses connections instead of follow
 router.get("/following", authMiddleware, async (req: AuthRequest, res) => {
   try {
     const userId = req.userId;
@@ -712,32 +712,41 @@ router.get("/following", authMiddleware, async (req: AuthRequest, res) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // 1) who am I following?
-    const follows = await prisma.follow.findMany({
-      where: { followerId: userId },
-      select: { followingId: true },
+    // Get accepted connections (Follow table doesn't exist in production)
+    const connections = await prisma.connection.findMany({
+      where: {
+        OR: [
+          { requesterId: userId, status: "ACCEPTED" },
+          { receiverId: userId, status: "ACCEPTED" },
+        ],
+      },
+      select: {
+        requesterId: true,
+        receiverId: true,
+      },
     });
 
-    const followingIds = follows.map((f) => f.followingId);
+    // Extract the other user IDs from connections
+    const connectedUserIds = connections.map((c) =>
+      c.requesterId === userId ? c.receiverId : c.requesterId
+    );
 
-    // if user follows no one, return empty list
-    if (followingIds.length === 0) {
+    // if user has no connections, return empty list
+    if (connectedUserIds.length === 0) {
       return res.json({ posts: [] });
     }
 
-    // 2) posts from people I follow,
-    //    but ONLY non-anonymous + not hidden
+    // Get posts from connected users (non-anonymous + not hidden)
     const posts = await prisma.post.findMany({
       where: {
-        authorId: { in: followingIds },
+        authorId: { in: connectedUserIds },
         isHidden: false,
-        isAnonymous: false, // ⬅️ important line
+        isAnonymous: false,
       },
       orderBy: { createdAt: "desc" },
       include: POST_INCLUDE,
     });
 
-    // 3) map into API shape
     return res.json({
       posts: posts.map(mapPost),
     });

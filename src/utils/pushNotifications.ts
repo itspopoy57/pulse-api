@@ -29,7 +29,7 @@ export async function sendPushNotification(payload: NotificationPayload): Promis
         pushToken: true,
         notificationsEnabled: true,
         notifyMessages: true,
-        notifyFollows: true,
+        notifyConnections: true,
         notifyComments: true,
         notifyReactions: true,
         notifyMentions: true,
@@ -44,7 +44,7 @@ export async function sendPushNotification(payload: NotificationPayload): Promis
     // Check user preferences based on notification type
     const notificationType = payload.data?.type;
     if (notificationType === 'message' && !user.notifyMessages) return false;
-    if (notificationType === 'follow' && !user.notifyFollows) return false;
+    if (notificationType === 'follow' && !user.notifyConnections) return false;
     if (notificationType === 'comment' && !user.notifyComments) return false;
     if (notificationType === 'reaction' && !user.notifyReactions) return false;
     if (notificationType === 'mention' && !user.notifyMentions) return false;

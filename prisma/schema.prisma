@@ -7,6 +7,444 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model BlockedUser {
+  id                               Int      @id @default(autoincrement())
+  blockerId                        Int
+  blockedId                        Int
+  reason                           String?
+  createdAt                        DateTime @default(now())
+  User_BlockedUser_blockedIdToUser User     @relation("BlockedUser_blockedIdToUser", fields: [blockedId], references: [id], onDelete: Cascade)
+  User_BlockedUser_blockerIdToUser User     @relation("BlockedUser_blockerIdToUser", fields: [blockerId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+  @@index([blockerId])
+}
+
+model Comment {
+  id              Int               @id @default(autoincrement())
+  text            String
+  isAnonymous     Boolean           @default(true)
+  authorId        Int
+  postId          Int
+  createdAt       DateTime          @default(now())
+  isHidden        Boolean           @default(false)
+  isReported      Boolean           @default(false)
+  reportedCount   Int               @default(0)
+  likeCount       Int               @default(0)
+  parentId        Int?
+  mediaType       String?
+  mediaUrl        String?
+  moderatedAt     DateTime?
+  moderatedBy     Int?
+  moderationNote  String?
+  User            User              @relation(fields: [authorId], references: [id])
+  Comment         Comment?          @relation("CommentToComment", fields: [parentId], references: [id])
+  other_Comment   Comment[]         @relation("CommentToComment")
+  Post            Post              @relation(fields: [postId], references: [id])
+  CommentReaction CommentReaction[]
+}
+
+model CommentReaction {
+  id        Int                @id @default(autoincrement())
+  type      ReactionType?
+  userId    Int
+  commentId Int
+  createdAt DateTime           @default(now())
+  emoji     EmojiReactionType?
+  Comment   Comment            @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  User      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, commentId])
+  @@index([commentId])
+}
+
+model Connection {
+  id                                Int              @id @default(autoincrement())
+  requesterId                       Int
+  receiverId                        Int
+  status                            ConnectionStatus @default(PENDING)
+  createdAt                         DateTime         @default(now())
+  updatedAt                         DateTime
+  acceptedAt                        DateTime?
+  User_Connection_receiverIdToUser  User             @relation("Connection_receiverIdToUser", fields: [receiverId], references: [id], onDelete: Cascade)
+  User_Connection_requesterIdToUser User             @relation("Connection_requesterIdToUser", fields: [requesterId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, receiverId])
+  @@index([receiverId])
+  @@index([requesterId])
+  @@index([status])
+}
+
+model Conversation {
+  id                              Int       @id @default(autoincrement())
+  user1Id                         Int
+  user2Id                         Int
+  lastMessageAt                   DateTime  @default(now())
+  lastMessageText                 String?
+  createdAt                       DateTime  @default(now())
+  updatedAt                       DateTime
+  User_Conversation_user1IdToUser User      @relation("Conversation_user1IdToUser", fields: [user1Id], references: [id], onDelete: Cascade)
+  User_Conversation_user2IdToUser User      @relation("Conversation_user2IdToUser", fields: [user2Id], references: [id], onDelete: Cascade)
+  Message                         Message[]
+
+  @@unique([user1Id, user2Id])
+  @@index([lastMessageAt])
+  @@index([user1Id])
+  @@index([user2Id])
+}
+
+model Group {
+  id              Int            @id @default(autoincrement())
+  name            String         @db.VarChar(100)
+  description     String?
+  avatarUrl       String?
+  creatorId       Int
+  lastMessageAt   DateTime?
+  lastMessageText String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime
+  User            User           @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  GroupMember     GroupMember[]
+  GroupMessage    GroupMessage[]
+  GroupTyping     GroupTyping[]
+
+  @@index([creatorId])
+  @@index([lastMessageAt])
+}
+
+model GroupMember {
+  id       Int       @id @default(autoincrement())
+  groupId  Int
+  userId   Int
+  role     GroupRole @default(MEMBER)
+  isMuted  Boolean   @default(false)
+  joinedAt DateTime  @default(now())
+  Group    Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  User     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([userId])
+}
+
+model GroupMessage {
+  id               Int                @id @default(autoincrement())
+  groupId          Int
+  senderId         Int
+  text             String?
+  mediaUrl         String?
+  mediaType        String?
+  fileName         String?
+  isDeleted        Boolean            @default(false)
+  deletedAt        DateTime?
+  deletedBy        Int?
+  createdAt        DateTime           @default(now())
+  Group            Group              @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  User             User               @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  GroupMessageRead GroupMessageRead[]
+
+  @@index([createdAt])
+  @@index([groupId, createdAt])
+  @@index([groupId])
+  @@index([senderId])
+}
+
+model GroupMessageRead {
+  id           Int          @id @default(autoincrement())
+  messageId    Int
+  userId       Int
+  readAt       DateTime     @default(now())
+  GroupMessage GroupMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  User         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([messageId])
+  @@index([userId])
+}
+
+model GroupTyping {
+  id        Int      @id @default(autoincrement())
+  groupId   Int
+  userId    Int
+  updatedAt DateTime
+  Group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  User      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([groupId])
+  @@index([updatedAt])
+}
+
+model Hashtag {
+  id          Int           @id @default(autoincrement())
+  useCount    Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime
+  tag         String        @unique
+  PostHashtag PostHashtag[]
+
+  @@index([tag])
+  @@index([useCount])
+}
+
+model Message {
+  id                            Int               @id @default(autoincrement())
+  conversationId                Int
+  senderId                      Int
+  receiverId                    Int
+  text                          String?
+  mediaUrl                      String?
+  mediaType                     String?
+  fileName                      String?
+  isRead                        Boolean           @default(false)
+  readAt                        DateTime?
+  createdAt                     DateTime          @default(now())
+  isDeleted                     Boolean           @default(false)
+  deletedAt                     DateTime?
+  deletedBy                     Int?
+  Conversation                  Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  User_Message_receiverIdToUser User              @relation("Message_receiverIdToUser", fields: [receiverId], references: [id], onDelete: Cascade)
+  User_Message_senderIdToUser   User              @relation("Message_senderIdToUser", fields: [senderId], references: [id], onDelete: Cascade)
+  MessageReaction               MessageReaction[]
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@index([isDeleted])
+  @@index([receiverId])
+  @@index([senderId])
+}
+
+model MessageReaction {
+  id        Int      @id @default(autoincrement())
+  messageId Int
+  userId    Int
+  emoji     String
+  createdAt DateTime @default(now())
+  Message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  User      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@index([userId])
+}
+
+model Notification {
+  id             Int       @id @default(autoincrement())
+  userId         Int
+  type           String
+  title          String
+  body           String
+  fromUserId     Int?
+  postId         Int?
+  commentId      Int?
+  conversationId Int?
+  groupId        Int?
+  isRead         Boolean   @default(false)
+  readAt         DateTime?
+  data           Json?
+  createdAt      DateTime  @default(now())
+  User           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([userId, isRead])
+}
+
+model Poll {
+  id            Int          @id @default(autoincrement())
+  postId        Int          @unique
+  allowMultiple Boolean      @default(false)
+  maxChoices    Int?
+  endsAt        DateTime?
+  totalVotes    Int          @default(0)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime
+  Post          Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
+  PollOption    PollOption[]
+  PollVote      PollVote[]
+
+  @@index([postId])
+}
+
+model PollOption {
+  id        Int        @id @default(autoincrement())
+  pollId    Int
+  text      String     @db.VarChar(100)
+  order     Int
+  voteCount Int        @default(0)
+  createdAt DateTime   @default(now())
+  Poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  PollVote  PollVote[]
+
+  @@index([pollId])
+  @@index([pollId, order])
+}
+
+model PollVote {
+  id         Int        @id @default(autoincrement())
+  pollId     Int
+  optionId   Int
+  userId     Int
+  createdAt  DateTime   @default(now())
+  PollOption PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  Poll       Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  User       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pollId, optionId])
+  @@index([optionId])
+  @@index([pollId])
+  @@index([userId])
+}
+
+model Post {
+  id             Int            @id @default(autoincrement())
+  type           PostType
+  title          String
+  body           String?
+  sideA          String?
+  sideB          String?
+  votesA         Int            @default(0)
+  votesB         Int            @default(0)
+  upvotes        Int            @default(0)
+  downvotes      Int            @default(0)
+  isAnonymous    Boolean        @default(true)
+  region         String?
+  authorId       Int
+  createdAt      DateTime       @default(now())
+  isHidden       Boolean        @default(false)
+  isReported     Boolean        @default(false)
+  reportedCount  Int            @default(0)
+  mediaType      String?
+  mediaUrl       String?
+  moderatedAt    DateTime?
+  moderatedBy    Int?
+  moderationNote String?
+  Comment        Comment[]
+  Poll           Poll?
+  User           User           @relation(fields: [authorId], references: [id])
+  PostHashtag    PostHashtag[]
+  PostReaction   PostReaction[]
+  SavedPost      SavedPost[]
+  VsVote         VsVote[]
+
+  @@index([createdAt])
+}
+
+model PostHashtag {
+  id        Int      @id @default(autoincrement())
+  postId    Int
+  hashtagId Int
+  createdAt DateTime @default(now())
+  Hashtag   Hashtag  @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+  Post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, hashtagId])
+  @@index([hashtagId])
+  @@index([postId])
+}
+
+model PostReaction {
+  id     Int          @id @default(autoincrement())
+  type   ReactionType
+  userId Int
+  postId Int
+  Post   Post         @relation(fields: [postId], references: [id])
+  User   User         @relation(fields: [userId], references: [id])
+
+  @@unique([userId, postId])
+}
+
+model SavedPost {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  postId    Int
+  createdAt DateTime @default(now())
+  Post      Post     @relation(fields: [postId], references: [id])
+  User      User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, postId])
+}
+
+model User {
+  id                                      Int                @id @default(autoincrement())
+  email                                   String             @unique
+  passwordHash                            String
+  username                                String?            @unique
+  region                                  String?
+  createdAt                               DateTime           @default(now())
+  avatarUrl                               String?
+  bio                                     String?
+  displayName                             String?
+  bannedAt                                DateTime?
+  bannedReason                            String?
+  isAdmin                                 Boolean            @default(false)
+  isBanned                                Boolean            @default(false)
+  notificationsEnabled                    Boolean            @default(true)
+  notifyComments                          Boolean            @default(true)
+  notifyMentions                          Boolean            @default(true)
+  notifyMessages                          Boolean            @default(true)
+  notifyReactions                         Boolean            @default(true)
+  pushPlatform                            String?
+  pushToken                               String?
+  notifyConnections                       Boolean            @default(true)
+  theme                                   String?            @default("dark")
+  BlockedUser_BlockedUser_blockedIdToUser BlockedUser[]      @relation("BlockedUser_blockedIdToUser")
+  BlockedUser_BlockedUser_blockerIdToUser BlockedUser[]      @relation("BlockedUser_blockerIdToUser")
+  Comment                                 Comment[]
+  CommentReaction                         CommentReaction[]
+  Connection_Connection_receiverIdToUser  Connection[]       @relation("Connection_receiverIdToUser")
+  Connection_Connection_requesterIdToUser Connection[]       @relation("Connection_requesterIdToUser")
+  Conversation_Conversation_user1IdToUser Conversation[]     @relation("Conversation_user1IdToUser")
+  Conversation_Conversation_user2IdToUser Conversation[]     @relation("Conversation_user2IdToUser")
+  Group                                   Group[]
+  GroupMember                             GroupMember[]
+  GroupMessage                            GroupMessage[]
+  GroupMessageRead                        GroupMessageRead[]
+  GroupTyping                             GroupTyping[]
+  Message_Message_receiverIdToUser        Message[]          @relation("Message_receiverIdToUser")
+  Message_Message_senderIdToUser          Message[]          @relation("Message_senderIdToUser")
+  MessageReaction                         MessageReaction[]
+  Notification                            Notification[]
+  PollVote                                PollVote[]
+  Post                                    Post[]
+  PostReaction                            PostReaction[]
+  SavedPost                               SavedPost[]
+  VsVote                                  VsVote[]
+}
+
+model VsVote {
+  id     Int    @id @default(autoincrement())
+  side   VsSide
+  userId Int
+  postId Int
+  Post   Post   @relation(fields: [postId], references: [id])
+  User   User   @relation(fields: [userId], references: [id])
+
+  @@unique([userId, postId])
+}
+
+enum ConnectionStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum EmojiReactionType {
+  LIKE
+  LOVE
+  FIRE
+  LAUGH
+  WOW
+  SAD
+  ANGRY
+}
+
+enum GroupRole {
+  ADMIN
+  MEMBER
+}
+
 enum PostType {
   HOT_TAKE
   CONFESSION
@@ -23,622 +461,4 @@ enum ReactionType {
 enum VsSide {
   A
   B
-}
-
-model User {
-  id           Int      @id @default(autoincrement())
-  email        String   @unique
-  passwordHash String
-  username     String?  @unique
-  region       String?
-  createdAt    DateTime @default(now())
-
-  // admin
-  isAdmin      Boolean  @default(false)
-  isBanned     Boolean  @default(false)
-  bannedAt     DateTime?
-  bannedReason String?
-
-  // profile
-  displayName  String?
-  bio          String?
-  avatarUrl    String?
-
-  // preferences
-  theme        String?  @default("dark") // 'dark' or 'light'
-
-  // push notifications
-  pushToken    String?
-  pushPlatform String?  // 'ios' or 'android'
-  notificationsEnabled Boolean @default(true)
-  
-  // notification preferences
-  notifyMessages   Boolean @default(true)
-  notifyConnections Boolean @default(true)
-  notifyComments   Boolean @default(true)
-  notifyReactions  Boolean @default(true)
-  notifyMentions   Boolean @default(true)
-
-  posts        Post[]
-  comments     Comment[]
-
-  // reactions
-  postReactions    PostReaction[]
-  vsVotes          VsVote[]
-  commentReactions CommentReaction[]
-
-  // bookmarks
-  savedPosts   SavedPost[]
-
-  // connection system (like LinkedIn)
-  sentConnections     Connection[] @relation("ConnectionRequester")
-  receivedConnections Connection[] @relation("ConnectionReceiver")
-  
-  // follow system
-  following    Follow[] @relation("Follower")
-  followers    Follow[] @relation("Following")
-  
-  // poll votes
-  pollVotes    PollVote[]
-  
-  // messaging
-  sentMessages     Message[] @relation("MessageSender")
-  receivedMessages Message[] @relation("MessageReceiver")
-  conversations1   Conversation[] @relation("ConversationUser1")
-  conversations2   Conversation[] @relation("ConversationUser2")
-  messageReactions MessageReaction[]
-  
-  // group messaging
-  groupMemberships GroupMember[]
-  groupMessages    GroupMessage[]
-  createdGroups    Group[] @relation("GroupCreator")
-  groupMessageReads GroupMessageRead[]
-  typingInGroups   GroupTyping[]
-  
-  // notifications
-  notifications    Notification[]
-  
-  // blocking
-  blockedUsers     BlockedUser[] @relation("BlockerUser")
-  blockedByUsers   BlockedUser[] @relation("BlockedUser")
-}
-
-model Poll {
-  id            Int          @id @default(autoincrement())
-  postId        Int          @unique
-  post          Post         @relation(fields: [postId], references: [id], onDelete: Cascade)
-  
-  // Poll settings
-  allowMultiple Boolean      @default(false)
-  maxChoices    Int?
-  endsAt        DateTime?
-  
-  // Metadata
-  totalVotes    Int          @default(0)
-  options       PollOption[]
-  votes         PollVote[]
-  
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  
-  @@index([postId])
-}
-
-model PollOption {
-  id        Int        @id @default(autoincrement())
-  pollId    Int
-  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
-  
-  text      String     @db.VarChar(100)
-  order     Int
-  votes     PollVote[]
-  voteCount Int        @default(0)
-  
-  createdAt DateTime   @default(now())
-  
-  @@index([pollId])
-  @@index([pollId, order])
-}
-
-model PollVote {
-  id        Int        @id @default(autoincrement())
-  pollId    Int
-  poll      Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
-  optionId  Int
-  option    PollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
-  userId    Int
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  createdAt DateTime   @default(now())
-  
-  @@unique([userId, pollId, optionId])
-  @@index([pollId])
-  @@index([optionId])
-  @@index([userId])
-}
-
-model Post {
-  id            Int        @id @default(autoincrement())
-  type          PostType
-  title         String
-  body          String?
-
-  // media on posts
-  mediaUrl      String?
-  mediaType     String?
-
-  sideA         String?
-  sideB         String?
-  votesA        Int        @default(0)
-  votesB        Int        @default(0)
-  upvotes       Int        @default(0)
-  downvotes     Int        @default(0)
-  isAnonymous   Boolean    @default(true)
-  region        String?
-
-  // moderation
-  isReported    Boolean    @default(false)
-  isHidden      Boolean    @default(false)
-  reportedCount Int        @default(0)
-  moderatedAt   DateTime?
-  moderatedBy   Int?
-  moderationNote String?
-
-  author        User       @relation(fields: [authorId], references: [id])
-  authorId      Int
-
-  comments      Comment[]
-  reactions     PostReaction[]
-  vsVotes       VsVote[]
-  poll          Poll?
-
-  // who bookmarked this
-  savedBy       SavedPost[]
-  
-  // hashtags
-  hashtags      PostHashtag[]
-
-  createdAt     DateTime   @default(now())
-  
-  @@index([createdAt])
-}
-
-model Comment {
-  id            Int       @id @default(autoincrement())
-  text          String
-  isAnonymous   Boolean   @default(true)
-  likeCount     Int       @default(0)
-  isHidden      Boolean   @default(false)
-  reportedCount Int       @default(0)
-  isReported    Boolean   @default(false)
-  moderatedAt   DateTime?
-  moderatedBy   Int?
-  moderationNote String?
-
-  mediaUrl      String?
-  mediaType     String?
-
-  postId   Int
-  post     Post   @relation(fields: [postId], references: [id])
-
-  authorId Int
-  author   User   @relation(fields: [authorId], references: [id])
-
-  parentId Int?
-  parent   Comment?  @relation("CommentToComment", fields: [parentId], references: [id])
-  replies  Comment[] @relation("CommentToComment")
-
-  reactions CommentReaction[]
-
-  createdAt DateTime @default(now())
-}
-
-// one reaction per user per post
-model PostReaction {
-  id        Int          @id @default(autoincrement())
-  type      ReactionType
-
-  user      User         @relation(fields: [userId], references: [id])
-  userId    Int
-
-  post      Post         @relation(fields: [postId], references: [id])
-  postId    Int
-
-  @@unique([userId, postId])
-}
-
-// one VS vote per user per post
-model VsVote {
-  id     Int    @id @default(autoincrement())
-  side   VsSide
-
-  user   User   @relation(fields: [userId], references: [id])
-  userId Int
-
-  post   Post   @relation(fields: [postId], references: [id])
-  postId Int
-
-  @@unique([userId, postId])
-}
-
-// Enhanced comment reactions with emoji types
-enum EmojiReactionType {
-  LIKE      // 👍
-  LOVE      // ❤️
-  FIRE      // 🔥
-  LAUGH     // 😂
-  WOW       // 😮
-  SAD       // 😢
-  ANGRY     // 😠
-}
-
-model CommentReaction {
-  id        Int                @id @default(autoincrement())
-  type      ReactionType?      // Keep for backward compatibility
-  emoji     EmojiReactionType? // New emoji reactions
-
-  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    Int
-
-  comment   Comment            @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  commentId Int
-  
-  createdAt DateTime           @default(now())
-
-  @@unique([userId, commentId])
-  @@index([commentId])
-}
-
-// saved posts (bookmarks)
-model SavedPost {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  postId    Int
-
-  user      User     @relation(fields: [userId], references: [id])
-  post      Post     @relation(fields: [postId], references: [id])
-
-  createdAt DateTime @default(now())
-
-  @@unique([userId, postId])
-}
-
-enum ConnectionStatus {
-  PENDING
-  ACCEPTED
-  REJECTED
-}
-
-model Connection {
-  id          Int              @id @default(autoincrement())
-
-  // who sent the connection request
-  requester   User             @relation("ConnectionRequester", fields: [requesterId], references: [id], onDelete: Cascade)
-  requesterId Int
-
-  // who received the connection request
-  receiver    User             @relation("ConnectionReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
-  receiverId  Int
-
-  status      ConnectionStatus @default(PENDING)
-  
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  acceptedAt  DateTime?
-
-  @@unique([requesterId, receiverId])
-  @@index([requesterId])
-  @@index([receiverId])
-  @@index([status])
-}
-
-// Follow system
-model Follow {
-  id          Int      @id @default(autoincrement())
-  followerId  Int
-  followingId Int
-  
-  follower    User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
-  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
-  
-  createdAt   DateTime @default(now())
-  
-  @@unique([followerId, followingId])
-  @@index([followerId])
-  @@index([followingId])
-}
-
-// Conversations between two users
-model Conversation {
-  id            Int       @id @default(autoincrement())
-  
-  // The two participants
-  user1         User      @relation("ConversationUser1", fields: [user1Id], references: [id], onDelete: Cascade)
-  user1Id       Int
-  
-  user2         User      @relation("ConversationUser2", fields: [user2Id], references: [id], onDelete: Cascade)
-  user2Id       Int
-  
-  // Messages in this conversation
-  messages      Message[]
-  
-  // Last message info for sorting
-  lastMessageAt DateTime  @default(now())
-  lastMessageText String?
-  
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-  
-  @@unique([user1Id, user2Id])
-  @@index([user1Id])
-  @@index([user2Id])
-  @@index([lastMessageAt])
-}
-
-// Individual messages
-model Message {
-  id             Int          @id @default(autoincrement())
-  
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  conversationId Int
-  
-  sender         User         @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
-  senderId       Int
-  
-  receiver       User         @relation("MessageReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
-  receiverId     Int
-  
-  text           String?      @db.Text
-  
-  // Attachments (images, files)
-  mediaUrl       String?
-  mediaType      String?      // 'image' or 'file'
-  fileName       String?      // Original filename for files
-  
-  // Message status
-  isRead         Boolean      @default(false)
-  readAt         DateTime?
-  
-  // Soft delete for admin monitoring
-  isDeleted      Boolean      @default(false)
-  deletedAt      DateTime?
-  deletedBy      Int?
-  
-  createdAt      DateTime     @default(now())
-  
-  @@index([conversationId])
-  @@index([senderId])
-  @@index([receiverId])
-  @@index([createdAt])
-  @@index([isDeleted])
-  
-  // message reactions
-  reactions MessageReaction[]
-}
-
-// Message reactions
-model MessageReaction {
-  id        Int                @id @default(autoincrement())
-  
-  message   Message            @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  messageId Int
-  
-  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId    Int
-  
-  emoji     String             // Emoji character (e.g., "👍", "❤️", "😂")
-  
-  createdAt DateTime           @default(now())
-  
-  @@unique([messageId, userId, emoji])
-  @@index([messageId])
-  @@index([userId])
-}
-
-// In-app notifications
-model Notification {
-  id        Int      @id @default(autoincrement())
-  
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  type      String   // 'message', 'follow', 'comment', 'reaction', 'mention', 'group_message', 'group_invite'
-  title     String
-  body      String
-  
-  // Related entities
-  fromUserId   Int?
-  postId       Int?
-  commentId    Int?
-  conversationId Int?
-  groupId      Int?
-  
-  // Status
-  isRead    Boolean  @default(false)
-  readAt    DateTime?
-  
-  // Data for navigation
-  data      Json?
-  
-  createdAt DateTime @default(now())
-  
-  @@index([userId])
-  @@index([userId, isRead])
-  @@index([createdAt])
-}
-
-// Group chat models
-model Group {
-  id          Int      @id @default(autoincrement())
-  name        String   @db.VarChar(100)
-  description String?  @db.Text
-  avatarUrl   String?
-  
-  // Creator/owner
-  creatorId   Int
-  creator     User     @relation("GroupCreator", fields: [creatorId], references: [id], onDelete: Cascade)
-  
-  // Members
-  members     GroupMember[]
-  messages    GroupMessage[]
-  
-  // Typing indicators
-  typingUsers GroupTyping[]
-  
-  // Metadata
-  lastMessageAt DateTime?
-  lastMessageText String?
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  @@index([creatorId])
-  @@index([lastMessageAt])
-}
-
-enum GroupRole {
-  ADMIN
-  MEMBER
-}
-
-model GroupMember {
-  id        Int       @id @default(autoincrement())
-  
-  groupId   Int
-  group     Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  
-  userId    Int
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  role      GroupRole @default(MEMBER)
-  
-  // Notification settings per group
-  isMuted   Boolean   @default(false)
-  
-  joinedAt  DateTime  @default(now())
-  
-  @@unique([groupId, userId])
-  @@index([groupId])
-  @@index([userId])
-}
-
-model GroupMessage {
-  id        Int      @id @default(autoincrement())
-  
-  groupId   Int
-  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  
-  senderId  Int
-  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  
-  text      String?  @db.Text
-  
-  // Attachments
-  mediaUrl  String?
-  mediaType String?  // 'image' or 'file'
-  fileName  String?
-  
-  // Read receipts
-  reads     GroupMessageRead[]
-  
-  // Soft delete
-  isDeleted Boolean  @default(false)
-  deletedAt DateTime?
-  deletedBy Int?
-  
-  createdAt DateTime @default(now())
-  
-  @@index([groupId])
-  @@index([senderId])
-  @@index([createdAt])
-  @@index([groupId, createdAt])
-}
-
-// Track who has read each message
-model GroupMessageRead {
-  id        Int      @id @default(autoincrement())
-  
-  messageId Int
-  message   GroupMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  readAt    DateTime @default(now())
-  
-  @@unique([messageId, userId])
-  @@index([messageId])
-  @@index([userId])
-}
-
-// Typing indicators for groups
-model GroupTyping {
-  id        Int      @id @default(autoincrement())
-  
-  groupId   Int
-  group     Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  updatedAt DateTime @updatedAt
-  
-  @@unique([groupId, userId])
-  @@index([groupId])
-  @@index([updatedAt])
-}
-
-// Hashtags
-model Hashtag {
-  id        Int           @id @default(autoincrement())
-  tag       String        @unique // lowercase, no # symbol
-  
-  posts     PostHashtag[]
-  
-  // Metadata
-  useCount  Int           @default(0)
-  
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  
-  @@index([tag])
-  @@index([useCount])
-}
-
-// Many-to-many relationship between posts and hashtags
-model PostHashtag {
-  id        Int      @id @default(autoincrement())
-  
-  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  postId    Int
-  
-  hashtag   Hashtag  @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
-  hashtagId Int
-  
-  createdAt DateTime @default(now())
-  
-  @@unique([postId, hashtagId])
-  @@index([postId])
-  @@index([hashtagId])
-}
-
-// Blocked users
-model BlockedUser {
-  id        Int      @id @default(autoincrement())
-  
-  // who is doing the blocking
-  blocker   User     @relation("BlockerUser", fields: [blockerId], references: [id], onDelete: Cascade)
-  blockerId Int
-  
-  // who is being blocked
-  blocked   User     @relation("BlockedUser", fields: [blockedId], references: [id], onDelete: Cascade)
-  blockedId Int
-  
-  reason    String?  // Optional reason for blocking
-  
-  createdAt DateTime @default(now())
-  
-  @@unique([blockerId, blockedId])
-  @@index([blockerId])
-  @@index([blockedId])
 }
