@@ -215,12 +215,14 @@ router.get("/connections", authMiddleware, async (req: AuthRequest, res) => {
   try {
     const currentUserId = req.userId;
     if (!currentUserId) {
+      console.error("❌ /users/connections - No userId");
       return res.status(401).json({ error: "Unauthorized" });
     }
 
     console.log("🤝 GET /users/connections for user:", currentUserId);
 
     // Get all accepted connections
+    console.log("📊 Querying Connection table...");
     const connections = await prisma.connection.findMany({
       where: {
         OR: [
@@ -280,10 +282,15 @@ router.get("/connections", authMiddleware, async (req: AuthRequest, res) => {
       })
     );
 
+    console.log("✅ Returning", usersWithConnectionInfo.length, "connections");
     return res.json({ users: usersWithConnectionInfo });
-  } catch (err) {
-    console.error("GET /users/connections error:", err);
-    res.status(500).json({ error: "Failed to load connections" });
+  } catch (err: any) {
+    console.error("❌ GET /users/connections FATAL ERROR:");
+    console.error("Error name:", err.name);
+    console.error("Error message:", err.message);
+    console.error("Error stack:", err.stack);
+    console.error("Full error:", JSON.stringify(err, null, 2));
+    res.status(500).json({ error: "Failed to load connections", details: err.message });
   }
 });
 
