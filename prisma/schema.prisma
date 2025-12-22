@@ -74,6 +74,10 @@ model User {
   sentConnections     Connection[] @relation("ConnectionRequester")
   receivedConnections Connection[] @relation("ConnectionReceiver")
   
+  // follow system
+  following    Follow[] @relation("Follower")
+  followers    Follow[] @relation("Following")
+  
   // poll votes
   pollVotes    PollVote[]
   
@@ -326,6 +330,22 @@ model Connection {
   @@index([requesterId])
   @@index([receiverId])
   @@index([status])
+}
+
+// Follow system
+model Follow {
+  id          Int      @id @default(autoincrement())
+  followerId  Int
+  followingId Int
+  
+  follower    User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
 }
 
 // Conversations between two users

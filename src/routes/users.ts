@@ -356,6 +356,81 @@ router.get("/connection-requests", authMiddleware, async (req: AuthRequest, res)
 });
 
 // ----------------------------------------------------
+//  GET FOLLOWING USERS
+// ----------------------------------------------------
+
+// GET /users/following - Get users that current user is following
+router.get("/following", authMiddleware, async (req: AuthRequest, res) => {
+  try {
+    const currentUserId = req.userId;
+    if (!currentUserId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    console.log("✓ GET /users/following for user:", currentUserId);
+
+    // Get all users the current user is following
+    const follows = await prisma.follow.findMany({
+      where: { followerId: currentUserId },
+      include: {
+        following: {
+          select: {
+            id: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            bio: true,
+          },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const usersWithConnectionInfo = await Promise.all(
+      follows.map(async (follow) => {
+        const user = follow.following;
+        
+        // Check if they follow back (mutual)
+        const followsBack = await prisma.follow.findFirst({
+          where: {
+            followerId: user.id,
+            followingId: currentUserId,
+          },
+        });
+
+        // Count their followers
+        const followerCount = await prisma.follow.count({
+          where: { followingId: user.id },
+        });
+
+        // Count who they're following
+        const followingCount = await prisma.follow.count({
+          where: { followerId: user.id },
+        });
+
+        return {
+          id: String(user.id),
+          username: user.username,
+          displayName: user.displayName,
+          avatarUrl: user.avatarUrl,
+          bio: user.bio,
+          followerCount,
+          followingCount,
+          isFollowing: true,
+          isFollowingBack: !!followsBack,
+          isMutual: !!followsBack,
+        };
+      })
+    );
+
+    return res.json({ users: usersWithConnectionInfo });
+  } catch (err) {
+    console.error("GET /users/following error:", err);
+    res.status(500).json({ error: "Failed to load following" });
+  }
+});
+
+// ----------------------------------------------------
 //  SEARCH USERS  (/users/search)
 // ----------------------------------------------------
 
