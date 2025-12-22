@@ -515,8 +515,8 @@ router.get('/users/:id/details', async (req: AuthRequest, res) => {
           select: {
             posts: true,
             comments: true,
-            followers: true,
-            following: true,
+            Connection_Connection_receiverIdToUser: true,
+            Connection_Connection_requesterIdToUser: true,
           }
         }
       }
